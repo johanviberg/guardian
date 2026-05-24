@@ -5,9 +5,9 @@
 > adds catalog management, scan history, scheduling, and notifications.
 
 Bumblebee answers *"what packages, extensions, and tools are on this machine?"*
-**guardian** answers *"is any of it known-malicious right now, what changed since last
-time, and who should know?"* — entirely on your machine. No account, no telemetry, no
-hosted backend.
+**guardian** answers *"is any of it known-malicious or known-vulnerable right now, what
+changed since last time, and who should know?"* — entirely on your machine. No account,
+no hosted backend, and no data leaves the machine unless you opt in.
 
 > **Status:** v1, pre-release. Module path: `github.com/johanviberg/guardian`.
 
@@ -21,12 +21,15 @@ guardian is a security tool, so its own behavior is conservative by design:
 - **Local-first & offline-capable.** A baseline exposure catalog is **embedded in the
   binary**, so a scan works on a fresh machine with no network. Catalog refresh over the
   network is optional and explicit.
-- **No telemetry.** Nothing is sent anywhere unless *you* configure a webhook/Slack
-  notifier. There is no phone-home, no analytics, no usage collection.
+- **No telemetry, egress is opt-in.** There is no phone-home, no analytics, no usage
+  collection. The only outbound traffic is what you enable: catalog refresh from a
+  configured feed, a webhook/Slack notifier, and OSV enrichment (off by default — when
+  on, it sends `{ecosystem, name, version}` of supported components to `api.osv.dev`).
 - **No cgo.** Pure-Go (incl. `modernc.org/sqlite`) → reproducible, statically-linkable
   cross-platform builds with a smaller native attack surface.
-- **Deterministic detection.** Findings are exact `(ecosystem, name, version)` matches
-  against a reviewed catalog — no fuzzy heuristics raising false alarms.
+- **Deterministic detection.** Findings are exact `(ecosystem, name, version)` matches —
+  against a reviewed exposure catalog (malicious) and, optionally, the OSV database
+  (vulnerable) — no fuzzy heuristics raising false alarms.
 
 See [SECURITY.md](SECURITY.md) for the vulnerability-reporting policy and threat model.
 
@@ -69,13 +72,13 @@ guardian doctor
 
 | Command | What it does |
 |---|---|
-| `scan [baseline\|project\|deep]` | Run a scan. `baseline` = global/user roots; `project` = `--root` dirs; `deep` = incident sweep. |
+| `scan [baseline\|project\|deep]` | Run a scan. `baseline` = global/user roots; `project` = `--root` dirs; `deep` = incident sweep. Add `--enrich` for OSV vulnerability data. |
 | `status` | Host, catalog freshness, last scan, current exposures. |
 | `diff [--since <run\|dur>]` | New / resolved / persisting findings vs a prior run. |
-| `catalog update\|list\|show` | Fetch and inspect exposure catalogs. |
+| `catalog update\|list\|show` | Fetch and inspect exposure catalogs (per-source provenance). |
 | `run` | Scheduling daemon (periodic scans + notifications). |
 | `service install\|uninstall` | Native launchd / systemd / Scheduled Task unit (or `--cron`). |
-| `suppress <eco> <name> <version>` | Acknowledge a finding, optionally `--until <duration>`. |
+| `suppress <eco> <name> <version>` | Acknowledge a finding, optionally `--until <dur>` (`7d`, `2w`, or any Go duration). |
 | `doctor` | Environment, catalog, and config health checks. |
 | `version` | guardian and scan-engine versions. |
 
@@ -117,14 +120,19 @@ guardian scan project --root . || [ $? -lt 2 ]
         "ecosystem": "npm",
         "name": "@beproduct/nestjs-auth",
         "version": "0.1.18",
-        "source_file": "/path/package-lock.json"
+        "source_file": "/path/package-lock.json",
+        "source": "catalog"
       }
     ]
   }
 }
 ```
 
-Output schemas, the catalog format, and exit codes are documented under [`docs/`](docs/).
+`source` is `catalog` (exposure-catalog match) or `osv` (vulnerability enrichment);
+OSV findings also carry a `summary`. Empty finding lists serialize as `[]`, not `null`.
+Output schemas, the catalog format, and exit codes are documented under [`docs/`](docs/):
+[OUTPUT_SCHEMA](docs/OUTPUT_SCHEMA.md) · [CATALOG_FORMAT](docs/CATALOG_FORMAT.md) ·
+[EXIT_CODES](docs/EXIT_CODES.md).
 
 ## Running as a service
 
@@ -224,9 +232,10 @@ for the enrichment threat model.
 cmd/guardian          CLI (cobra) — wires the pipeline
 internal/scanner      Scanner interface; VendoredScanner drives the engine
 internal/bumblebee    Vendored Bumblebee fork (Apache-2.0) + exported engine shim
-internal/catalog      Fetch/cache/validate catalogs (+ embedded baseline)
+internal/catalog      Multi-source fetch/cache/merge/verify (+ embedded baseline, minisign)
+internal/enrich       OSV vulnerability enrichment (opt-in)
 internal/store        SQLite history, suppressions, retention (pure-Go, no cgo)
-internal/policy       Classification + suppression + 0/1/2 exit codes
+internal/policy       Classification + suppression + gated exit codes
 internal/diff         Run-to-run finding diff
 internal/notify       Terminal / desktop / webhook+Slack notifiers
 internal/service      launchd / systemd / Scheduled Task / cron generators

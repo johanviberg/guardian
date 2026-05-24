@@ -39,8 +39,10 @@ manifests, exposure catalogs) on a developer's machine. Its design constraints:
 - **Read-only inspection.** guardian and the vendored engine never install, modify,
   execute, or network-fetch the packages they inspect. The only outbound network calls
   guardian itself makes are: (a) optional exposure-catalog refresh from a configured
-  source, and (b) optional user-configured webhook/Slack notifications. Both are off by
-  default for offline use (`--no-fetch`, no notifier configured).
+  source, (b) optional user-configured webhook/Slack notifications, and (c) optional OSV
+  enrichment (sends `{ecosystem, name, version}` of supported components to `api.osv.dev`;
+  see below). All three are off by default for offline use (`--no-fetch`, no notifier
+  configured, enrichment disabled).
 - **No code execution from scanned content.** Catalog and lockfile parsing is pure data
   decoding; malformed input is rejected or skipped, never evaluated.
 - **No privilege escalation.** Service installation targets per-user units

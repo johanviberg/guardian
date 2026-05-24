@@ -6,9 +6,9 @@ parsing output.
 
 | Code | Name | Meaning |
 |------|------|---------|
-| `0` | clean | No actionable findings. Suppressed findings never escalate the exit code. |
-| `1` | findings | One or more findings are present, but none are confirmed-malicious. |
-| `2` | malicious | At least one **confirmed-malicious / critical** finding. |
+| `0` | clean | No escalating findings. Suppressed and (by default) OSV-enrichment findings never escalate. |
+| `1` | findings | Escalating findings present, none confirmed-malicious (catalog-`vulnerable`, or OSV findings promoted via `enrich.fail_on`). |
+| `2` | malicious | At least one **confirmed-malicious / critical** catalog finding. |
 
 Any other non-zero code is an operational error (bad flags, unreadable config, no usable
 catalog, I/O failure) — not a finding result. Errors are written to stderr.
@@ -19,8 +19,22 @@ catalog, I/O failure) — not a finding result. Errors are written to stderr.
 2. Active suppressions are applied; suppressed findings are excluded from escalation.
 3. The exit code is the maximum over the remaining findings:
    - any `confirmed-malicious` → `2`
-   - else any finding → `1`
+   - else any **catalog** finding → `1`
    - else → `0`
+
+## OSV enrichment findings
+
+Findings from optional OSV enrichment (`source: osv`, always `class: vulnerable`) are
+**informational by default** — they appear in output and the JSON `findings[]` but do
+**not** change the exit code, regardless of severity. They escalate only when you set a
+threshold:
+
+- `enrich.fail_on: <severity>` (or `GUARDIAN_ENRICH_FAIL_ON=<severity>`) makes an OSV
+  finding at or above that severity escalate the exit code to `1`.
+- Catalog gating (`2` for confirmed-malicious, `1` for catalog-`vulnerable`) is unchanged.
+
+So with `enrich.fail_on` unset, `guardian scan --enrich` can report vulnerabilities while
+still exiting `0`; set `fail_on: high` to fail CI on high/critical CVEs.
 
 ## Gating examples
 
