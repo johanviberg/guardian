@@ -1,90 +1,200 @@
 // Package catalog fetches, caches, versions, and validates Bumblebee exposure
 // catalogs.
 //
-// A catalog is a JSON document of the shape:
+// # Real catalog schema (from vendored internal/bumblebee/threat_intel/)
+//
+// Each per-advisory catalog file is a JSON object with the shape below.
+// Unknown top-level keys (e.g. "_comment", "_indicators") and unknown
+// per-entry keys (e.g. "source", "indicators") are tolerated for forward
+// compatibility.
 //
 //	{
-//	  "schema_version": 1,
+//	  "schema_version": "0.1.0",          // STRING — required; engine rejects integer
+//	  "_comment": "...",                   // optional, ignored
+//	  "_indicators": {...},                // optional, ignored
 //	  "entries": [
-//	    {"id": "MAL-2026-104", "ecosystem": "npm", "package": "evil",
-//	     "versions": ["1.0.0"], "severity": "critical"}
+//	    {
+//	      "id":        "...",              // required
+//	      "name":      "...",              // optional free-form label
+//	      "ecosystem": "npm",             // required
+//	      "package":   "evil",            // required
+//	      "versions":  ["1.0.0"],         // required, non-empty
+//	      "severity":  "critical",        // optional, FREE-FORM (not an enum)
+//	      "source":    "...",             // optional, ignored
+//	      ...                             // any unknown keys ignored
+//	    }
 //	  ]
 //	}
 //
-// guardian's catalog management layer (this package) is responsible for keeping
-// a local cached copy fresh, recording provenance metadata (version, fetch time,
-// sha256 checksum, entry count, source URL), and reporting freshness to
-// `guardian status` / `guardian doctor`. Detection itself (exact
-// (ecosystem, name, version) matching) is performed downstream by the scanner.
+// The upstream threat_intel/ directory is a set of per-advisory JSON files;
+// there is no single combined catalog.json. LoadDir merges them. The engine
+// (internal/bumblebee/internal/exposure) accepts either a single file or a
+// directory as its --exposure-catalog argument; Ensure caches a merged single
+// file so either the file or directory path works as input to the engine.
 package catalog
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-
-	"github.com/rmxventures/guardian/internal/model"
+	"path/filepath"
+	"sort"
+	"strings"
 )
 
-// Catalog models the on-disk / over-the-wire exposure catalog JSON.
+// SchemaVersion is the only schema_version value that the bundled engine
+// (internal/bumblebee) currently accepts. Our Validate enforces this so
+// problems surface before the scanner is invoked.
+const SchemaVersion = "0.1.0"
+
+// Catalog models a parsed exposure catalog. It may be loaded from a single
+// per-advisory JSON file or merged from a directory of such files via LoadDir.
 type Catalog struct {
-	SchemaVersion int     `json:"schema_version"`
-	Version       string  `json:"version,omitempty"` // optional catalog-supplied version
+	// SchemaVersion is a STRING in the real format ("0.1.0"). The engine
+	// REJECTS integer values, so this field must remain string.
+	SchemaVersion string  `json:"schema_version"`
+	Version       string  `json:"version,omitempty"` // optional catalog-supplied version tag
 	Entries       []Entry `json:"entries"`
 }
 
 // Entry is a single exposure advisory in the catalog.
+//
+// Severity is a FREE-FORM string label (e.g. "critical", "high", "info")
+// echoed onto findings. The engine does not interpret it for matching; guardian
+// maps it downstream in internal/policy. Unknown values are accepted — do not
+// restrict to any enum.
+//
+// Name is an optional human-readable label (not used for matching).
 type Entry struct {
-	ID        string         `json:"id"`
-	Ecosystem string         `json:"ecosystem"`
-	Package   string         `json:"package"`
-	Versions  []string       `json:"versions"`
-	Severity  model.Severity `json:"severity"`
+	ID        string   `json:"id"`
+	Name      string   `json:"name,omitempty"` // optional human label, not used for matching
+	Ecosystem string   `json:"ecosystem"`
+	Package   string   `json:"package"`
+	Versions  []string `json:"versions"`
+	Severity  string   `json:"severity,omitempty"` // free-form; NOT restricted to an enum
 }
 
-// validSeverities is the set of severity values guardian accepts in a catalog.
-// It mirrors internal/model's Severity constants.
-var validSeverities = map[model.Severity]bool{
-	model.SeverityCritical: true,
-	model.SeverityHigh:     true,
-	model.SeverityMedium:   true,
-	model.SeverityLow:      true,
-	model.SeverityInfo:     true,
+// rawCatalog is used to decode JSON while discarding unknown top-level keys
+// (e.g. "_comment", "_indicators") that appear in real catalog files.
+type rawCatalog struct {
+	SchemaVersion string  `json:"schema_version"`
+	Version       string  `json:"version"`
+	Entries       []Entry `json:"entries"`
 }
 
-// LoadFile reads and parses a catalog JSON file. It does not validate the
-// catalog's contents; call Validate for that.
+// LoadFile reads and parses a single catalog JSON file from path. Unknown
+// top-level keys are silently ignored.
 func LoadFile(path string) (*Catalog, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("catalog: read %s: %w", path, err)
 	}
-	return Parse(b)
+	c, err := Parse(b)
+	if err != nil {
+		return nil, fmt.Errorf("catalog: %s: %w", path, err)
+	}
+	return c, nil
 }
 
-// Parse decodes a catalog from raw JSON bytes. Unknown fields are tolerated so
-// that newer upstream catalog schemas remain forward-compatible; structural
-// soundness is enforced separately by Validate.
+// Parse decodes a catalog from raw JSON bytes. Unknown fields at any level are
+// tolerated so that upstream additions (e.g. "_comment", "_indicators",
+// per-entry "source" / "indicators") do not cause parse errors.
+//
+// An empty or whitespace-only input is accepted as a zero-entry catalog (for
+// placeholder files staged before content is published).
 func Parse(b []byte) (*Catalog, error) {
-	var c Catalog
-	if err := json.Unmarshal(b, &c); err != nil {
+	if strings.TrimSpace(string(b)) == "" {
+		return &Catalog{SchemaVersion: SchemaVersion}, nil
+	}
+	var raw rawCatalog
+	if err := json.Unmarshal(b, &raw); err != nil {
 		return nil, fmt.Errorf("catalog: parse: %w", err)
 	}
-	return &c, nil
+	return &Catalog{
+		SchemaVersion: raw.SchemaVersion,
+		Version:       raw.Version,
+		Entries:       raw.Entries,
+	}, nil
 }
 
-// Validate checks that the catalog is structurally sound: it has at least one
-// entry, and every entry carries the required fields with a known severity.
+// LoadDir loads and merges all *.json catalog files found directly inside dir
+// (alphabetical order, mirroring the engine's loadDir semantics). Non-.json
+// files, subdirectories, and symlinks that resolve to directories are skipped.
+//
+// Merge rules (same as the engine):
+//   - schema_version must be identical across all files that declare it.
+//   - Entries are concatenated in file-alphabetical order.
+//   - An empty directory (or one with no .json files) returns an empty Catalog
+//     rather than an error — this matches the engine's placeholder convention.
+func LoadDir(dir string) (*Catalog, error) {
+	des, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("catalog: read dir %s: %w", dir, err)
+	}
+
+	var names []string
+	for _, de := range des {
+		if de.IsDir() {
+			continue
+		}
+		if !strings.HasSuffix(strings.ToLower(de.Name()), ".json") {
+			continue
+		}
+		// Skip symlinks that resolve to directories.
+		if de.Type()&os.ModeSymlink != 0 {
+			if target, serr := os.Stat(filepath.Join(dir, de.Name())); serr == nil && target.IsDir() {
+				continue
+			}
+		}
+		names = append(names, de.Name())
+	}
+	sort.Strings(names)
+
+	var combined []Entry
+	var schemaVersion string
+	var firstSource string
+
+	for _, name := range names {
+		path := filepath.Join(dir, name)
+		c, err := LoadFile(path)
+		if err != nil {
+			return nil, err // LoadFile already wraps with path context
+		}
+		switch {
+		case schemaVersion == "":
+			schemaVersion = c.SchemaVersion
+			firstSource = path
+		case c.SchemaVersion != "" && c.SchemaVersion != schemaVersion:
+			return nil, fmt.Errorf("catalog: %s declares schema_version %q which conflicts with %q (from %s)",
+				path, c.SchemaVersion, schemaVersion, firstSource)
+		}
+		combined = append(combined, c.Entries...)
+	}
+
+	if schemaVersion == "" {
+		schemaVersion = SchemaVersion // sensible default for an empty/placeholder dir
+	}
+	return &Catalog{SchemaVersion: schemaVersion, Entries: combined}, nil
+}
+
+// Validate checks that the catalog is structurally sound:
+//   - schema_version is a non-empty string (the engine requires this)
+//   - every entry has the required fields: id, ecosystem, package, and at
+//     least one version
+//   - severity, when present, is accepted as-is (free-form label)
+//
+// An empty entries slice is allowed; placeholder catalogs are valid. Callers
+// that require at least one entry (e.g. after a remote fetch) should check
+// len(c.Entries) separately.
 func (c *Catalog) Validate() error {
 	if c == nil {
 		return errors.New("catalog: nil catalog")
 	}
-	if c.SchemaVersion <= 0 {
-		return fmt.Errorf("catalog: invalid schema_version %d", c.SchemaVersion)
-	}
-	if len(c.Entries) == 0 {
-		return errors.New("catalog: no entries")
+	if strings.TrimSpace(c.SchemaVersion) == "" {
+		return errors.New("catalog: schema_version is required and must be a non-empty string (real catalogs use \"0.1.0\")")
 	}
 	for i, e := range c.Entries {
 		if e.ID == "" {
@@ -99,9 +209,21 @@ func (c *Catalog) Validate() error {
 		if len(e.Versions) == 0 {
 			return fmt.Errorf("catalog: entry %d (%s): no versions", i, e.ID)
 		}
-		if !validSeverities[e.Severity] {
-			return fmt.Errorf("catalog: entry %d (%s): unknown severity %q", i, e.ID, e.Severity)
-		}
+		// Severity is free-form; no enum restriction applied here.
 	}
 	return nil
+}
+
+// SHA256Hex returns the hex-encoded SHA-256 of the catalog's canonical JSON
+// representation, used for provenance and change-detection in the metadata
+// sidecar. The JSON is marshalled from the in-memory Catalog (not the raw
+// on-wire bytes) so the checksum is stable across re-fetches of semantically
+// identical catalogs regardless of whitespace.
+func (c *Catalog) SHA256Hex() (string, error) {
+	b, err := json.Marshal(c)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:]), nil
 }

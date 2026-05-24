@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/rmxventures/guardian/internal/catalog"
+	"github.com/rmxventures/guardian/internal/catalog/builtin"
 	"github.com/rmxventures/guardian/internal/config"
 	"github.com/rmxventures/guardian/internal/diff"
 	"github.com/rmxventures/guardian/internal/model"
@@ -63,13 +64,21 @@ func loadConfig(roots []string) (*config.Config, error) {
 }
 
 // newCatalogManager builds a catalog.Manager from config, honoring --no-fetch.
+// The embedded baseline catalogs are materialized to the cache dir and used as
+// the offline default, so a scan succeeds on a fresh machine with no network.
 func newCatalogManager(cfg *config.Config, noFetch bool) (*catalog.Manager, error) {
+	defaultDir, err := builtin.Materialize(cfg.Catalog.CacheDir)
+	if err != nil {
+		// Non-fatal: fall back to whatever the manager can fetch/cache.
+		defaultDir = ""
+	}
 	return catalog.NewManager(catalog.Config{
-		CacheDir:   cfg.Catalog.CacheDir,
-		SourceURL:  cfg.Catalog.SourceURL,
-		TTL:        cfg.Catalog.FreshnessTTL,
-		NoFetch:    noFetch,
-		HTTPClient: &http.Client{Timeout: 30 * time.Second},
+		CacheDir:          cfg.Catalog.CacheDir,
+		SourceURL:         cfg.Catalog.SourceURL,
+		TTL:               cfg.Catalog.FreshnessTTL,
+		NoFetch:           noFetch,
+		DefaultCatalogDir: defaultDir,
+		HTTPClient:        &http.Client{Timeout: 30 * time.Second},
 	})
 }
 

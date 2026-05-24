@@ -103,5 +103,16 @@ part of the vendored tree and is preserved across re-syncs. It is the only
 sanctioned programmatic entry point into the vendored scanner.
 EOF
 
+echo "==> Refreshing embedded baseline catalogs (internal/catalog/builtin/catalogs)"
+# The builtin package embeds a snapshot of threat_intel/ so the binary ships a
+# usable offline catalog. Keep it in lockstep with the vendored engine.
+BUILTIN_CATALOGS="${REPO_ROOT}/internal/catalog/builtin/catalogs"
+if [ -d "${VENDOR_DIR}/threat_intel" ]; then
+  mkdir -p "${BUILTIN_CATALOGS}"
+  rm -f "${BUILTIN_CATALOGS}"/*.json
+  cp "${VENDOR_DIR}/threat_intel"/*.json "${BUILTIN_CATALOGS}/"
+  echo "    Copied $(ls "${BUILTIN_CATALOGS}"/*.json | wc -l | tr -d ' ') catalog file(s)."
+fi
+
 echo "==> Done. Vendored ${UPSTREAM_REPO}@${COMMIT_SHA} into ${VENDOR_DIR}"
-echo "    Next: gofmt + go build ./internal/bumblebee/... and review the diff."
+echo "    Next: gofmt + go build ./... and review the diff."
