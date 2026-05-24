@@ -152,18 +152,17 @@ func ConfigFilePath() (string, error) {
 	return path, nil
 }
 
-// overlayFile parses a YAML config file and overlays its values onto cfg.
+// overlayFile parses a YAML config file via yaml.v3 and overlays its values
+// onto cfg. Only keys present in the file touch cfg; absent keys keep their
+// current (default) values. Unknown top-level keys are rejected so typos in
+// guardian.yaml surface as an error rather than being silently ignored.
 func overlayFile(cfg *Config, path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("config: read %s: %w", path, err)
 	}
-	doc, err := parseYAML(string(data))
-	if err != nil {
-		return fmt.Errorf("config: parse %s: %w", path, err)
-	}
-	if err := applyYAML(cfg, doc); err != nil {
-		return fmt.Errorf("config: apply %s: %w", path, err)
+	if err := applyYAML(cfg, data); err != nil {
+		return fmt.Errorf("config: %s: %w", path, err)
 	}
 	return nil
 }

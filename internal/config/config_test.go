@@ -326,3 +326,118 @@ notify:
 		t.Errorf("block seq = %v", cfg.Notify.Channels)
 	}
 }
+
+// TestYAMLUnknownFieldRejected verifies that yaml.v3's KnownFields(true) is
+// active: a typo in guardian.yaml surfaces as a parse error rather than being
+// silently swallowed.
+func TestYAMLUnknownFieldRejected(t *testing.T) {
+	isolateEnv(t)
+	writeConfig(t, `
+catalog:
+  source_url: https://example.com/catalog.json
+  typo_field: oops
+`)
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for unknown yaml field, got nil")
+	}
+	if !strings.Contains(err.Error(), "typo_field") {
+		t.Errorf("error should mention the offending field, got: %v", err)
+	}
+}
+
+// TestYAMLScheduleBlock verifies that a schedule mapping in the file correctly
+// overlays individual profile intervals while leaving unmentioned profiles at
+// their defaults.
+func TestYAMLScheduleBlock(t *testing.T) {
+	isolateEnv(t)
+	writeConfig(t, `
+schedule:
+  baseline: 15
+  project: 5
+`)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Schedule["baseline"] != 15 {
+		t.Errorf("baseline = %d", cfg.Schedule["baseline"])
+	}
+	if cfg.Schedule["project"] != 5 {
+		t.Errorf("project = %d", cfg.Schedule["project"])
+	}
+	// "deep" was not set in the file; default of 0 must still be present.
+	if v, ok := cfg.Schedule["deep"]; !ok || v != 0 {
+		t.Errorf("deep should remain at default 0, got ok=%v val=%d", ok, v)
+	}
+}
+
+// TestYAMLEmptyFile verifies that an empty (or whitespace-only) config file
+// leaves all defaults intact without returning an error.
+func TestYAMLEmptyFile(t *testing.T) {
+	isolateEnv(t)
+	writeConfig(t, "\n# just a comment\n")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Catalog.SourceURL != DefaultCatalogSourceURL {
+		t.Errorf("empty file changed source url: %q", cfg.Catalog.SourceURL)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("empty file + defaults should validate: %v", err)
+	}
+}
+
+// TestYAMLPartialOverlay confirms that writing only one field in the file
+// leaves every other field at its default, exercising the nil-pointer overlay
+// strategy in applyYAML.
+func TestYAMLPartialOverlay(t *testing.T) {
+	isolateEnv(t)
+	writeConfig(t, `
+retention:
+  component_days: 7
+`)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Retention.ComponentDays != 7 {
+		t.Errorf("retention = %d", cfg.Retention.ComponentDays)
+	}
+	// Everything else must be untouched.
+	if cfg.Catalog.SourceURL != DefaultCatalogSourceURL {
+		t.Errorf("source url changed unexpectedly: %q", cfg.Catalog.SourceURL)
+	}
+	if cfg.Catalog.FreshnessTTL != DefaultFreshnessTTL {
+		t.Errorf("ttl changed unexpectedly: %s", cfg.Catalog.FreshnessTTL)
+	}
+	if len(cfg.Notify.Channels) != 1 || cfg.Notify.Channels[0] != "terminal" {
+		t.Errorf("channels changed unexpectedly: %v", cfg.Notify.Channels)
+	}
+}
+
+// TestYAMLPrecedence_EnvWinsOverFile tests the full stack in one shot:
+// file sets a value, env overrides it, result should be env's value.
+func TestYAMLPrecedence_EnvWinsOverFile(t *testing.T) {
+	isolateEnv(t)
+	writeConfig(t, `
+notify:
+  min_severity: low
+catalog:
+  freshness_ttl: 48h
+`)
+	t.Setenv("GUARDIAN_NOTIFY_MIN_SEVERITY", "medium")
+	t.Setenv("GUARDIAN_CATALOG_FRESHNESS_TTL", "1h")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Notify.MinSeverity != "medium" {
+		t.Errorf("env should override file for min_severity: %q", cfg.Notify.MinSeverity)
+	}
+	if cfg.Catalog.FreshnessTTL != time.Hour {
+		t.Errorf("env should override file for freshness_ttl: %s", cfg.Catalog.FreshnessTTL)
+	}
+}

@@ -1,183 +1,122 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
-	"strconv"
+	"io"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
-// applyYAML overlays a parsed YAML document onto cfg. Only keys present in the
-// document are touched; absent keys retain their prior (default) values.
-func applyYAML(cfg *Config, doc *yamlNode) error {
-	if doc == nil || !doc.isMapping() {
-		return fmt.Errorf("yaml: top-level document must be a mapping")
+// fileConfig is the intermediate representation of guardian.yaml. Every field
+// is a pointer so that yaml.v3 leaves absent keys as nil — allowing applyYAML
+// to distinguish "not set in file" from "set to zero value", and therefore
+// overlay only the keys the user actually wrote.
+//
+// yaml.v3 with KnownFields(true) will reject any key not present in this
+// struct, surfacing typos in the config file as an error.
+type fileConfig struct {
+	ScanRoots []string       `yaml:"scan_roots"`
+	Schedule  map[string]int `yaml:"schedule"`
+	Catalog   *fileCatalog   `yaml:"catalog"`
+	Notify    *fileNotify    `yaml:"notify"`
+	Retention *fileRetention `yaml:"retention"`
+	DBPath    *string        `yaml:"db_path"`
+	StateDir  *string        `yaml:"state_dir"`
+}
+
+type fileCatalog struct {
+	SourceURL    *string `yaml:"source_url"`
+	FreshnessTTL *string `yaml:"freshness_ttl"` // parsed as Go duration string
+	CacheDir     *string `yaml:"cache_dir"`
+}
+
+type fileNotify struct {
+	Channels    []string        `yaml:"channels"`
+	WebhookURL  *string         `yaml:"webhook_url"`
+	MinSeverity *string         `yaml:"min_severity"`
+	QuietHours  *fileQuietHours `yaml:"quiet_hours"`
+}
+
+type fileQuietHours struct {
+	Start *string `yaml:"start"`
+	End   *string `yaml:"end"`
+}
+
+type fileRetention struct {
+	ComponentDays *int `yaml:"component_days"`
+}
+
+// applyYAML unmarshals raw YAML bytes into the intermediate fileConfig and
+// overlays each present field onto cfg. It rejects unknown top-level keys.
+func applyYAML(cfg *Config, data []byte) error {
+	var fc fileConfig
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&fc); err != nil {
+		// An empty or comment-only file produces io.EOF; treat as no-op.
+		if err == io.EOF {
+			return nil
+		}
+		return fmt.Errorf("parse: %w", err)
 	}
 
-	if n := doc.mapping["scan_roots"]; n != nil {
-		roots, err := scalarSlice("scan_roots", n)
-		if err != nil {
-			return err
-		}
-		cfg.ScanRoots = roots
+	if fc.ScanRoots != nil {
+		cfg.ScanRoots = append([]string(nil), fc.ScanRoots...)
 	}
-
-	if n := doc.mapping["schedule"]; n != nil {
-		if !n.isMapping() {
-			return fmt.Errorf("yaml: schedule must be a mapping")
-		}
+	if fc.Schedule != nil {
 		if cfg.Schedule == nil {
-			cfg.Schedule = map[string]int{}
+			cfg.Schedule = make(map[string]int, len(fc.Schedule))
 		}
-		for profile, vn := range n.mapping {
-			mins, err := scalarInt("schedule."+profile, vn)
-			if err != nil {
-				return err
-			}
+		for profile, mins := range fc.Schedule {
 			cfg.Schedule[profile] = mins
 		}
 	}
-
-	if n := doc.mapping["catalog"]; n != nil {
-		if err := applyCatalog(cfg, n); err != nil {
-			return err
+	if c := fc.Catalog; c != nil {
+		if c.SourceURL != nil {
+			cfg.Catalog.SourceURL = *c.SourceURL
 		}
-	}
-	if n := doc.mapping["notify"]; n != nil {
-		if err := applyNotify(cfg, n); err != nil {
-			return err
-		}
-	}
-	if n := doc.mapping["retention"]; n != nil {
-		if !n.isMapping() {
-			return fmt.Errorf("yaml: retention must be a mapping")
-		}
-		if v := n.mapping["component_days"]; v != nil {
-			days, err := scalarInt("retention.component_days", v)
+		if c.FreshnessTTL != nil {
+			d, err := time.ParseDuration(*c.FreshnessTTL)
 			if err != nil {
-				return err
+				return fmt.Errorf("catalog.freshness_ttl: %w", err)
 			}
-			cfg.Retention.ComponentDays = days
+			cfg.Catalog.FreshnessTTL = d
+		}
+		if c.CacheDir != nil {
+			cfg.Catalog.CacheDir = *c.CacheDir
 		}
 	}
-
-	if n := doc.mapping["db_path"]; n != nil {
-		s, err := scalarString("db_path", n)
-		if err != nil {
-			return err
+	if n := fc.Notify; n != nil {
+		if n.Channels != nil {
+			cfg.Notify.Channels = append([]string(nil), n.Channels...)
 		}
-		cfg.DBPath = s
+		if n.WebhookURL != nil {
+			cfg.Notify.WebhookURL = *n.WebhookURL
+		}
+		if n.MinSeverity != nil {
+			cfg.Notify.MinSeverity = *n.MinSeverity
+		}
+		if qh := n.QuietHours; qh != nil {
+			if qh.Start != nil {
+				cfg.Notify.QuietHours.Start = *qh.Start
+			}
+			if qh.End != nil {
+				cfg.Notify.QuietHours.End = *qh.End
+			}
+		}
 	}
-	if n := doc.mapping["state_dir"]; n != nil {
-		s, err := scalarString("state_dir", n)
-		if err != nil {
-			return err
+	if r := fc.Retention; r != nil {
+		if r.ComponentDays != nil {
+			cfg.Retention.ComponentDays = *r.ComponentDays
 		}
-		cfg.StateDir = s
+	}
+	if fc.DBPath != nil {
+		cfg.DBPath = *fc.DBPath
+	}
+	if fc.StateDir != nil {
+		cfg.StateDir = *fc.StateDir
 	}
 	return nil
-}
-
-func applyCatalog(cfg *Config, n *yamlNode) error {
-	if !n.isMapping() {
-		return fmt.Errorf("yaml: catalog must be a mapping")
-	}
-	if v := n.mapping["source_url"]; v != nil {
-		s, err := scalarString("catalog.source_url", v)
-		if err != nil {
-			return err
-		}
-		cfg.Catalog.SourceURL = s
-	}
-	if v := n.mapping["freshness_ttl"]; v != nil {
-		s, err := scalarString("catalog.freshness_ttl", v)
-		if err != nil {
-			return err
-		}
-		d, err := time.ParseDuration(s)
-		if err != nil {
-			return fmt.Errorf("yaml: catalog.freshness_ttl: %w", err)
-		}
-		cfg.Catalog.FreshnessTTL = d
-	}
-	if v := n.mapping["cache_dir"]; v != nil {
-		s, err := scalarString("catalog.cache_dir", v)
-		if err != nil {
-			return err
-		}
-		cfg.Catalog.CacheDir = s
-	}
-	return nil
-}
-
-func applyNotify(cfg *Config, n *yamlNode) error {
-	if !n.isMapping() {
-		return fmt.Errorf("yaml: notify must be a mapping")
-	}
-	if v := n.mapping["channels"]; v != nil {
-		ch, err := scalarSlice("notify.channels", v)
-		if err != nil {
-			return err
-		}
-		cfg.Notify.Channels = ch
-	}
-	if v := n.mapping["webhook_url"]; v != nil {
-		s, err := scalarString("notify.webhook_url", v)
-		if err != nil {
-			return err
-		}
-		cfg.Notify.WebhookURL = s
-	}
-	if v := n.mapping["min_severity"]; v != nil {
-		s, err := scalarString("notify.min_severity", v)
-		if err != nil {
-			return err
-		}
-		cfg.Notify.MinSeverity = s
-	}
-	if v := n.mapping["quiet_hours"]; v != nil {
-		if !v.isMapping() {
-			return fmt.Errorf("yaml: notify.quiet_hours must be a mapping")
-		}
-		if s := v.mapping["start"]; s != nil {
-			str, err := scalarString("notify.quiet_hours.start", s)
-			if err != nil {
-				return err
-			}
-			cfg.Notify.QuietHours.Start = str
-		}
-		if e := v.mapping["end"]; e != nil {
-			str, err := scalarString("notify.quiet_hours.end", e)
-			if err != nil {
-				return err
-			}
-			cfg.Notify.QuietHours.End = str
-		}
-	}
-	return nil
-}
-
-func scalarString(key string, n *yamlNode) (string, error) {
-	if n.isMapping() || n.isSequence() {
-		return "", fmt.Errorf("yaml: %s must be a scalar", key)
-	}
-	return n.scalar, nil
-}
-
-func scalarInt(key string, n *yamlNode) (int, error) {
-	s, err := scalarString(key, n)
-	if err != nil {
-		return 0, err
-	}
-	v, err := strconv.Atoi(s)
-	if err != nil {
-		return 0, fmt.Errorf("yaml: %s must be an integer: %w", key, err)
-	}
-	return v, nil
-}
-
-func scalarSlice(key string, n *yamlNode) ([]string, error) {
-	if !n.isSequence() {
-		return nil, fmt.Errorf("yaml: %s must be a sequence", key)
-	}
-	return append([]string(nil), n.sequence...), nil
 }
