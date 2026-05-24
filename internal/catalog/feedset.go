@@ -273,30 +273,11 @@ func (fs *FeedSet) Ensure(ctx context.Context) (mergedPath, version string, err 
 		fs.warnf("%s", w)
 	}
 
-	// Step 4: compute combined hash (over per-source sha256s in stable name order,
-	// same ordering as sourceMeta which follows Sources order).
-	combinedHasher := sha256.New()
-	for _, sm := range sourceMeta {
-		if sm.Skipped || sm.SHA256 == "" {
-			continue
-		}
-		raw, _ := hex.DecodeString(sm.SHA256)
-		combinedHasher.Write(raw) // #nosec G104 -- sha256.Write never returns an error
-	}
-	combinedHex := hex.EncodeToString(combinedHasher.Sum(nil))
-	prefix := combinedHex
-	if len(prefix) > 12 {
-		prefix = prefix[:12]
-	}
-
-	now := fs.cfg.now()
-	ver := fmt.Sprintf("%s-%s", now.UTC().Format("20060102"), prefix)
-	// If the merged catalog itself has a version tag, prefer it.
-	if merged.Version != "" {
-		ver = merged.Version
-	}
-
-	// Step 5: write the merged catalog and its sidecar.
+	// Step 4: marshal the merged catalog and hash its content. The version is
+	// derived from the merged content hash, so it is stable and meaningful in
+	// every case — including offline / baseline-only, where no remote source
+	// contributes a hash (otherwise the version would degrade to the sha256 of
+	// an empty input).
 	mergedBody, err := json.MarshalIndent(merged, "", "  ")
 	if err != nil {
 		return "", "", fmt.Errorf("marshal merged catalog: %w", err)
@@ -304,6 +285,17 @@ func (fs *FeedSet) Ensure(ctx context.Context) (mergedPath, version string, err 
 
 	mergedSum := sha256.Sum256(mergedBody)
 	mergedHex := hex.EncodeToString(mergedSum[:])
+
+	prefix := mergedHex
+	if len(prefix) > 12 {
+		prefix = prefix[:12]
+	}
+	now := fs.cfg.now()
+	ver := fmt.Sprintf("%s-%s", now.UTC().Format("20060102"), prefix)
+	// If the merged catalog itself has a version tag, prefer it.
+	if merged.Version != "" {
+		ver = merged.Version
+	}
 
 	if err := os.MkdirAll(fs.cfg.CacheDir, 0o750); err != nil {
 		return "", "", fmt.Errorf("create cache dir: %w", err)

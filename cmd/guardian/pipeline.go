@@ -243,7 +243,7 @@ func renderScanOutcome(w io.Writer, o *scanOutcome, asJSON bool) error {
 		CatalogVersion: o.catalogVer,
 		ScannedAt:      o.result.FinishedAt,
 		ComponentCount: len(o.result.Components),
-		Findings:       o.result.Findings,
+		Findings:       report.NonNilFindings(o.result.Findings),
 		Counts:         report.CountFindings(actionable(o.result.Findings)),
 		ExitCode:       o.exitCode,
 	}

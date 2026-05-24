@@ -60,6 +60,7 @@ func newStatusCmd() *cobra.Command {
 				host, _ := os.Hostname()
 				view.Host = host
 			}
+			view.Findings = report.NonNilFindings(view.Findings)
 
 			if asJSON {
 				return report.WriteJSON(os.Stdout, "status", view)

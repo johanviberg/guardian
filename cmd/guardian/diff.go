@@ -58,9 +58,9 @@ func newDiffCmd() *cobra.Command {
 
 			d := diff.Compare(prev, latest)
 			view := report.DiffView{
-				New:        d.New,
-				Resolved:   d.Resolved,
-				Persisting: d.Persisting,
+				New:        report.NonNilFindings(d.New),
+				Resolved:   report.NonNilFindings(d.Resolved),
+				Persisting: report.NonNilFindings(d.Persisting),
 			}
 			if asJSON {
 				return report.WriteJSON(os.Stdout, "diff", view)

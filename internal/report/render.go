@@ -11,6 +11,16 @@ import (
 	"github.com/johanviberg/guardian/internal/model"
 )
 
+// NonNilFindings returns f unchanged, or an empty non-nil slice when f is nil,
+// so the JSON envelope emits an empty array ([]) rather than null for the
+// "no findings" case — friendlier for agents and jq consumers.
+func NonNilFindings(f []model.Finding) []model.Finding {
+	if f == nil {
+		return []model.Finding{}
+	}
+	return f
+}
+
 // Counts summarises findings by severity for headline display.
 type Counts struct {
 	Critical int `json:"critical"`
