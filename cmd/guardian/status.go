@@ -74,7 +74,7 @@ func newStatusCmd() *cobra.Command {
 // catalogFreshness reports the cached catalog version, fetch time, and staleness
 // without any network access. A missing catalog reports version "" and stale.
 func catalogFreshness(ctx context.Context, cfg *config.Config) (version string, fetchedAt time.Time, stale bool) {
-	mgr, err := newCatalogManager(cfg, true)
+	mgr, err := newCatalogManager(cfg, true, os.Stderr)
 	if err != nil {
 		return "", time.Time{}, true
 	}

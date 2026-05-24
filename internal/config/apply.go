@@ -30,6 +30,8 @@ type fileCatalog struct {
 	SourceURL    *string `yaml:"source_url"`
 	FreshnessTTL *string `yaml:"freshness_ttl"` // parsed as Go duration string
 	CacheDir     *string `yaml:"cache_dir"`
+	Verify       *string `yaml:"verify"`
+	PublicKey    *string `yaml:"public_key"`
 }
 
 type fileNotify struct {
@@ -86,6 +88,12 @@ func applyYAML(cfg *Config, data []byte) error {
 		}
 		if c.CacheDir != nil {
 			cfg.Catalog.CacheDir = *c.CacheDir
+		}
+		if c.Verify != nil {
+			cfg.Catalog.Verify = *c.Verify
+		}
+		if c.PublicKey != nil {
+			cfg.Catalog.PublicKey = *c.PublicKey
 		}
 	}
 	if n := fc.Notify; n != nil {

@@ -49,9 +49,24 @@ manifests, exposure catalogs) on a developer's machine. Its design constraints:
   under your user state directory. It is not encrypted at rest; protect it with normal
   filesystem permissions. It contains an inventory of your installed packages — treat it
   as you would any local dev metadata.
-- **Catalog trust.** Findings are only as trustworthy as the catalog. v1 validates
-  catalog **schema and content** and (for cached copies) records a sha256, but does not
-  yet verify cryptographic **signatures**. Pin your catalog source to a trusted location.
+- **Catalog trust.** Findings are only as trustworthy as the catalog. guardian always
+  validates catalog **schema and content** and records a sha256 for cached copies. It
+  additionally supports **opt-in [minisign](https://jedisct1.github.io/minisign/)-compatible
+  Ed25519 signature verification** of fetched catalog feeds, controlled by
+  `catalog.verify`:
+  - `off` (default) — no signature checking. The default upstream Bumblebee feed is
+    **unsigned**, so verification is off out of the box.
+  - `warn` — verify when a sibling `.minisig` signature is available; on a missing or
+    invalid signature, log a warning and proceed.
+  - `require` — every fetched catalog file must carry a valid signature from the trusted
+    key (`catalog.public_key`); any missing, malformed, wrong-key, or invalid signature
+    **aborts the update and writes nothing to the cache** (verification happens on the
+    exact bytes that would be cached, before caching).
+
+  guardian is **verify-only**: maintainers sign feeds with the standard `minisign` CLI and
+  publish a detached `<file>.minisig` next to each catalog file. Point `catalog.public_key`
+  at the trusted public key (a file path or an inline key) and set `catalog.verify: require`
+  when sourcing from a self-signed feed. Still pin your catalog source to a trusted location.
 
 ## Supply-chain hardening of this project
 

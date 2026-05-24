@@ -41,11 +41,35 @@ const (
 	configFileName = "guardian.yaml"
 )
 
+// Catalog signature-verification modes.
+const (
+	// VerifyOff disables signature verification entirely (default; the default
+	// upstream feed is unsigned).
+	VerifyOff = "off"
+	// VerifyWarn verifies when a signature is available and warns (but proceeds)
+	// on a missing or invalid signature.
+	VerifyWarn = "warn"
+	// VerifyRequire demands a valid signature from the trusted key on every
+	// catalog file; a missing or invalid signature aborts the update.
+	VerifyRequire = "require"
+)
+
 // CatalogConfig configures exposure-catalog fetching and caching.
 type CatalogConfig struct {
 	SourceURL    string        `json:"source_url" yaml:"source_url"`
 	FreshnessTTL time.Duration `json:"freshness_ttl" yaml:"freshness_ttl"`
 	CacheDir     string        `json:"cache_dir" yaml:"cache_dir"`
+
+	// Verify selects minisign signature verification of fetched catalog files:
+	// "off" (default), "warn", or "require". See the Verify* constants.
+	Verify string `json:"verify" yaml:"verify"`
+
+	// PublicKey is the trusted minisign public key used when Verify != "off".
+	// It accepts either a path to a minisign public-key file OR an inline key
+	// (the base64 key line, optionally with its `untrusted comment:` line). The
+	// catalog manager detects which by trying to parse it as a key first, then
+	// falling back to treating it as a file path.
+	PublicKey string `json:"public_key" yaml:"public_key"`
 }
 
 // QuietHours is an inclusive local-time window during which notifications are
@@ -103,6 +127,7 @@ func Defaults() *Config {
 			SourceURL:    DefaultCatalogSourceURL,
 			FreshnessTTL: DefaultFreshnessTTL,
 			CacheDir:     filepath.Join(cacheDir, "catalog"),
+			Verify:       VerifyOff,
 		},
 		Notify: NotifyConfig{
 			Channels:    []string{"terminal"},
@@ -188,6 +213,13 @@ func (c *Config) Validate() error {
 	if c.Catalog.FreshnessTTL <= 0 {
 		return fmt.Errorf("config: catalog.freshness_ttl must be positive, got %s", c.Catalog.FreshnessTTL)
 	}
+	if !validVerifyMode(c.Catalog.Verify) {
+		return fmt.Errorf("config: catalog.verify %q must be one of %q, %q, %q",
+			c.Catalog.Verify, VerifyOff, VerifyWarn, VerifyRequire)
+	}
+	if c.Catalog.Verify == VerifyRequire && c.Catalog.PublicKey == "" {
+		return fmt.Errorf("config: catalog.verify is %q but catalog.public_key is not set", VerifyRequire)
+	}
 	if c.Retention.ComponentDays < 0 {
 		return fmt.Errorf("config: retention.component_days must not be negative, got %d", c.Retention.ComponentDays)
 	}
@@ -224,6 +256,14 @@ func (c *Config) Validate() error {
 func validSeverity(s string) bool {
 	switch s {
 	case "critical", "high", "medium", "low", "info":
+		return true
+	}
+	return false
+}
+
+func validVerifyMode(s string) bool {
+	switch s {
+	case VerifyOff, VerifyWarn, VerifyRequire:
 		return true
 	}
 	return false
@@ -315,6 +355,8 @@ func (c *Config) Effective() string {
 	w("  source_url:    %s\n", c.Catalog.SourceURL)
 	w("  freshness_ttl: %s\n", c.Catalog.FreshnessTTL)
 	w("  cache_dir:     %s\n", c.Catalog.CacheDir)
+	w("  verify:        %s\n", c.Catalog.Verify)
+	w("  public_key:    %s\n", redact(c.Catalog.PublicKey))
 
 	w("notify:\n")
 	w("  channels:      %s\n", strings.Join(c.Notify.Channels, ", "))

@@ -12,6 +12,7 @@ import (
 
 	"github.com/johanviberg/guardian/internal/catalog"
 	"github.com/johanviberg/guardian/internal/catalog/builtin"
+	"github.com/johanviberg/guardian/internal/catalog/minisign"
 	"github.com/johanviberg/guardian/internal/config"
 	"github.com/johanviberg/guardian/internal/diff"
 	"github.com/johanviberg/guardian/internal/model"
@@ -66,12 +67,25 @@ func loadConfig(roots []string) (*config.Config, error) {
 // newCatalogManager builds a catalog.Manager from config, honoring --no-fetch.
 // The embedded baseline catalogs are materialized to the cache dir and used as
 // the offline default, so a scan succeeds on a fresh machine with no network.
-func newCatalogManager(cfg *config.Config, noFetch bool) (*catalog.Manager, error) {
+func newCatalogManager(cfg *config.Config, noFetch bool, warn io.Writer) (*catalog.Manager, error) {
 	defaultDir, err := builtin.Materialize(cfg.Catalog.CacheDir)
 	if err != nil {
 		// Non-fatal: fall back to whatever the manager can fetch/cache.
 		defaultDir = ""
 	}
+
+	// Resolve the trusted minisign public key when verification is enabled.
+	var (
+		pubKey    minisign.PublicKey
+		pubKeySet bool
+	)
+	if cfg.Catalog.Verify != config.VerifyOff && cfg.Catalog.PublicKey != "" {
+		pubKey, pubKeySet, err = catalog.ResolvePublicKey(cfg.Catalog.PublicKey)
+		if err != nil {
+			return nil, fmt.Errorf("catalog public key: %w", err)
+		}
+	}
+
 	return catalog.NewManager(catalog.Config{
 		CacheDir:          cfg.Catalog.CacheDir,
 		SourceURL:         cfg.Catalog.SourceURL,
@@ -79,6 +93,10 @@ func newCatalogManager(cfg *config.Config, noFetch bool) (*catalog.Manager, erro
 		NoFetch:           noFetch,
 		DefaultCatalogDir: defaultDir,
 		HTTPClient:        &http.Client{Timeout: 30 * time.Second},
+		Verify:            cfg.Catalog.Verify,
+		PublicKey:         pubKey,
+		PublicKeySet:      pubKeySet,
+		WarnWriter:        warn,
 	})
 }
 
@@ -90,7 +108,7 @@ func ensureCatalog(ctx context.Context, cfg *config.Config, override string, noF
 	if override != "" {
 		return override, "(override)", false, nil
 	}
-	mgr, err := newCatalogManager(cfg, noFetch)
+	mgr, err := newCatalogManager(cfg, noFetch, warn)
 	if err != nil {
 		return "", "", false, err
 	}

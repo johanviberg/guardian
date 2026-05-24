@@ -143,6 +143,30 @@ exact `(ecosystem, name, version)` matching. guardian ships an embedded baseline
 and can refresh from a configurable source. See
 [`docs/CATALOG_FORMAT.md`](docs/CATALOG_FORMAT.md).
 
+### Optional signature verification
+
+guardian can verify fetched feeds against a trusted
+[minisign](https://jedisct1.github.io/minisign/) public key (verify-only; sign with the
+standard `minisign` CLI). A detached signature lives next to each file as a sibling
+`<file>.minisig`. Configure via `catalog.verify` (`off` default, `warn`, `require`) and
+`catalog.public_key` (a key file path or inline key); `require` also accepts the
+`GUARDIAN_CATALOG_VERIFY` / `GUARDIAN_CATALOG_PUBLIC_KEY` env vars. The default upstream
+feed is unsigned, so verification is `off` out of the box.
+
+Pointing at a self-signed feed:
+
+```yaml
+catalog:
+  source_url: https://example.com/feeds/catalog.json
+  verify: require
+  public_key: /etc/guardian/feed.pub
+```
+
+In `require` mode a missing or invalid signature aborts the update and caches nothing; in
+`warn` mode it logs a warning and proceeds. See
+[`docs/CATALOG_FORMAT.md`](docs/CATALOG_FORMAT.md#signature-verification-optional) for
+signing steps.
+
 ## Architecture
 
 ```

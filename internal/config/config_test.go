@@ -39,6 +39,68 @@ func writeConfig(t *testing.T, body string) {
 	}
 }
 
+func TestCatalogVerifyConfig(t *testing.T) {
+	isolateEnv(t)
+
+	// Default is off.
+	if got := Defaults().Catalog.Verify; got != VerifyOff {
+		t.Fatalf("default verify = %q, want %q", got, VerifyOff)
+	}
+
+	// Invalid mode rejected.
+	c := Defaults()
+	c.Catalog.Verify = "bogus"
+	if err := c.Validate(); err == nil {
+		t.Fatal("Validate accepted invalid verify mode")
+	}
+
+	// require without public_key rejected.
+	c = Defaults()
+	c.Catalog.Verify = VerifyRequire
+	if err := c.Validate(); err == nil {
+		t.Fatal("Validate accepted require without public_key")
+	}
+
+	// require with public_key accepted.
+	c.Catalog.PublicKey = "/path/to/key.pub"
+	if err := c.Validate(); err != nil {
+		t.Fatalf("Validate(require + key) = %v", err)
+	}
+
+	// warn is valid even without a key.
+	c = Defaults()
+	c.Catalog.Verify = VerifyWarn
+	if err := c.Validate(); err != nil {
+		t.Fatalf("Validate(warn) = %v", err)
+	}
+
+	// Env overlay.
+	t.Setenv("GUARDIAN_CATALOG_VERIFY", "require")
+	t.Setenv("GUARDIAN_CATALOG_PUBLIC_KEY", "RWQinline")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Catalog.Verify != VerifyRequire || cfg.Catalog.PublicKey != "RWQinline" {
+		t.Fatalf("env overlay: verify=%q key=%q", cfg.Catalog.Verify, cfg.Catalog.PublicKey)
+	}
+}
+
+func TestCatalogVerifyYAML(t *testing.T) {
+	isolateEnv(t)
+	writeConfig(t, "catalog:\n  verify: warn\n  public_key: /etc/guardian/feed.pub\n")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Catalog.Verify != VerifyWarn {
+		t.Fatalf("yaml verify = %q", cfg.Catalog.Verify)
+	}
+	if cfg.Catalog.PublicKey != "/etc/guardian/feed.pub" {
+		t.Fatalf("yaml public_key = %q", cfg.Catalog.PublicKey)
+	}
+}
+
 func TestDefaults(t *testing.T) {
 	isolateEnv(t)
 	cfg := Defaults()

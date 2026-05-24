@@ -14,6 +14,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/johanviberg/guardian/internal/catalog/minisign"
 )
 
 // DefaultSourceURL is the GitHub Contents API listing for the upstream
@@ -47,6 +49,32 @@ var ErrStale = errors.New("catalog: cached copy is stale")
 
 // ErrNoCatalog is returned when no usable catalog is available at all.
 var ErrNoCatalog = errors.New("catalog: no catalog available")
+
+// ErrSignature is returned (wrapped) when signature verification is required
+// (Verify == VerifyRequire) and a downloaded catalog file has a missing or
+// invalid minisign signature. When this is returned, nothing is written to the
+// cache — verification happens before caching.
+var ErrSignature = errors.New("catalog: signature verification failed")
+
+// Signature-verification modes, mirroring config.Verify*.
+const (
+	// VerifyOff disables signature verification (default).
+	VerifyOff = "off"
+	// VerifyWarn verifies when a signature is available and warns (but proceeds)
+	// on a missing or invalid signature.
+	VerifyWarn = "warn"
+	// VerifyRequire requires a valid signature on every catalog file; any
+	// missing or invalid signature aborts the update with ErrSignature.
+	VerifyRequire = "require"
+)
+
+// minisigSuffix is the conventional detached-signature filename suffix.
+const minisigSuffix = ".minisig"
+
+// errNotFound is an internal sentinel: httpGet wraps it for an HTTP 404 so that
+// signature fetches can distinguish a cleanly-absent sibling .minisig from a
+// transport error.
+var errNotFound = errors.New("not found")
 
 // Config configures a Manager.
 type Config struct {
@@ -84,6 +112,23 @@ type Config struct {
 	// HTTPClient is used for all outbound requests. Defaults to a client with
 	// a 30-second timeout.
 	HTTPClient *http.Client
+
+	// Verify selects minisign signature verification of fetched catalog files:
+	// VerifyOff (default/empty), VerifyWarn, or VerifyRequire. Verification only
+	// runs when Verify != VerifyOff and PublicKey is set.
+	Verify string
+
+	// PublicKey is the trusted minisign public key. It is only consulted when
+	// Verify != VerifyOff. The zero value is treated as "no key".
+	PublicKey minisign.PublicKey
+
+	// PublicKeySet indicates whether PublicKey carries a real key. Callers that
+	// construct Config from configuration should set this when a key was parsed.
+	PublicKeySet bool
+
+	// WarnWriter receives human-readable warnings (e.g. missing/invalid
+	// signatures in VerifyWarn mode). Nil discards warnings.
+	WarnWriter io.Writer
 
 	// now is injectable for deterministic tests. Nil means time.Now.
 	now func() time.Time
@@ -127,10 +172,111 @@ func NewManager(cfg Config) (*Manager, error) {
 	if cfg.now == nil {
 		cfg.now = time.Now
 	}
+	if cfg.Verify == "" {
+		cfg.Verify = VerifyOff
+	}
 	return &Manager{cfg: cfg}, nil
 }
 
+// ResolvePublicKey interprets a configured public-key string, which may be
+// either an inline minisign public key (the base64 line, optionally with its
+// `untrusted comment:` line) OR a path to a minisign public-key file.
+//
+// Detection: the string is first tried as an inline key; if that fails it is
+// treated as a file path. An empty string returns the zero key with set=false
+// and no error (verification disabled).
+func ResolvePublicKey(s string) (pk minisign.PublicKey, set bool, err error) {
+	trimmed := strings.TrimSpace(s)
+	if trimmed == "" {
+		return minisign.PublicKey{}, false, nil
+	}
+	if k, perr := minisign.ParsePublicKey(trimmed); perr == nil {
+		return k, true, nil
+	}
+	// Fall back to treating it as a path.
+	k, ferr := minisign.LoadPublicKey(s)
+	if ferr != nil {
+		return minisign.PublicKey{}, false,
+			fmt.Errorf("catalog: public_key %q is neither a valid inline minisign key nor a readable key file: %w", s, ferr)
+	}
+	return k, true, nil
+}
+
 func (m *Manager) offline() bool { return m.cfg.Offline || m.cfg.NoFetch }
+
+// verifyEnabled reports whether signature verification should run: the mode is
+// not "off" and a trusted public key is present.
+func (m *Manager) verifyEnabled() bool {
+	return m.cfg.Verify != VerifyOff && m.cfg.Verify != "" && m.cfg.PublicKeySet
+}
+
+// warnf emits a warning to the configured WarnWriter, if any.
+func (m *Manager) warnf(format string, args ...any) {
+	if m.cfg.WarnWriter == nil {
+		return
+	}
+	fmt.Fprintf(m.cfg.WarnWriter, "guardian: catalog signature: "+format+"\n", args...)
+}
+
+// verifyBytes verifies message against a detached minisign signature fetched
+// from sigURL. label is a human-readable name for messages.
+//
+// Behavior depends on m.cfg.Verify:
+//   - VerifyRequire: a missing or invalid signature returns a wrapped
+//     ErrSignature (caller must abort and not cache).
+//   - VerifyWarn: a missing or invalid signature is logged and nil is returned
+//     so the caller proceeds.
+//
+// It is only called when verifyEnabled() is true.
+func (m *Manager) verifyBytes(ctx context.Context, label string, message []byte, sigURL string) error {
+	sigBytes, sigOK, err := m.fetchSignature(ctx, sigURL)
+	if err != nil {
+		// Hard transport error fetching the signature (not a clean 404).
+		return m.signatureFailure(label, fmt.Sprintf("fetching signature: %v", err))
+	}
+	if !sigOK {
+		return m.signatureFailure(label, "no signature available")
+	}
+
+	sig, err := minisign.ParseSignature(sigBytes)
+	if err != nil {
+		return m.signatureFailure(label, fmt.Sprintf("malformed signature: %v", err))
+	}
+	if err := m.cfg.PublicKey.Verify(message, sig); err != nil {
+		switch {
+		case errors.Is(err, minisign.ErrWrongKey):
+			return m.signatureFailure(label, "signature was made with a different key than the configured public key")
+		default:
+			return m.signatureFailure(label, fmt.Sprintf("invalid signature: %v", err))
+		}
+	}
+	return nil
+}
+
+// signatureFailure applies the configured policy to a verification failure:
+// require => wrapped ErrSignature; warn => log and return nil.
+func (m *Manager) signatureFailure(label, reason string) error {
+	if m.cfg.Verify == VerifyRequire {
+		return fmt.Errorf("%w: %s: %s", ErrSignature, label, reason)
+	}
+	// VerifyWarn: warn and proceed.
+	m.warnf("%s: %s (proceeding because verify mode is %q)", label, reason, m.cfg.Verify)
+	return nil
+}
+
+// fetchSignature fetches a detached signature. It returns ok=false (with no
+// error) when the signature is cleanly absent (HTTP 404), so callers can treat
+// "missing" distinctly from a transport failure.
+func (m *Manager) fetchSignature(ctx context.Context, sigURL string) (body []byte, ok bool, err error) {
+	body, err = m.httpGet(ctx, sigURL)
+	if err != nil {
+		if errors.Is(err, errNotFound) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	return body, true, nil
+}
 
 func (m *Manager) catalogPath() string { return filepath.Join(m.cfg.CacheDir, catalogFileName) }
 func (m *Manager) metaPath() string    { return filepath.Join(m.cfg.CacheDir, metaFileName) }
@@ -168,6 +314,11 @@ func (m *Manager) Ensure(ctx context.Context) (cachedPath string, version string
 		meta, fetchErr := m.fetch(ctx)
 		if fetchErr == nil {
 			return m.catalogPath(), meta.Version, nil
+		}
+		// A signature failure in require mode is a hard, security-relevant error.
+		// Do not silently fall back to a cached or vendored catalog — surface it.
+		if errors.Is(fetchErr, ErrSignature) {
+			return "", "", fetchErr
 		}
 		// Fetch failed — degrade gracefully.
 		if haveCache {
@@ -283,6 +434,11 @@ func (m *Manager) httpGet(ctx context.Context, url string) ([]byte, error) {
 	defer resp.Body.Close() // #nosec G307 -- read-only response body; close error is ignorable here
 
 	if resp.StatusCode != http.StatusOK {
+		// A 404 is wrapped with errNotFound so callers (signature fetches) can
+		// treat a cleanly-absent resource distinctly from a transport error.
+		if resp.StatusCode == http.StatusNotFound {
+			return nil, fmt.Errorf("%w: %s", errNotFound, url)
+		}
 		// Surface a helpful message for the GitHub API rate-limit case (HTTP 403
 		// or 429 with X-RateLimit-Remaining: 0).
 		remaining := resp.Header.Get("X-RateLimit-Remaining")
@@ -307,6 +463,15 @@ func (m *Manager) fetchSingle(ctx context.Context, rawURL string) (Meta, error) 
 	body, err := m.httpGet(ctx, rawURL)
 	if err != nil {
 		return Meta{}, err
+	}
+
+	// Verify the exact bytes that will be cached, before parsing/caching, so a
+	// VerifyRequire failure aborts without writing anything.
+	if m.verifyEnabled() {
+		sigURL := rawURL + minisigSuffix
+		if verr := m.verifyBytes(ctx, "catalog", body, sigURL); verr != nil {
+			return Meta{}, verr
+		}
 	}
 
 	cat, err := Parse(body)
@@ -359,10 +524,22 @@ func (m *Manager) fetchDir(ctx context.Context) (Meta, error) {
 		return Meta{}, fmt.Errorf("parse listing: expected GitHub Contents API JSON array: %w", err)
 	}
 
-	// Step 2: filter to *.json files with a non-empty download_url.
+	// Step 2: filter to *.json files with a non-empty download_url. Build a
+	// lookup of every file's download_url by name so we can locate sibling
+	// "<name>.minisig" signatures from the same listing.
+	sigURLByName := make(map[string]string, len(files))
+	for _, f := range files {
+		if f.Type == "file" && f.DownloadURL != "" {
+			sigURLByName[f.Name] = f.DownloadURL
+		}
+	}
 	var toFetch []ghFile
 	for _, f := range files {
 		if f.Type != "file" {
+			continue
+		}
+		// Exclude detached-signature files themselves from the merge set.
+		if strings.HasSuffix(strings.ToLower(f.Name), minisigSuffix) {
 			continue
 		}
 		if !strings.HasSuffix(strings.ToLower(f.Name), ".json") {
@@ -392,6 +569,21 @@ func (m *Manager) fetchDir(ctx context.Context) (Meta, error) {
 		if err != nil {
 			return Meta{}, fmt.Errorf("download %s: %w", f.Name, err)
 		}
+
+		// Verify the exact downloaded bytes before merging/caching. The signature
+		// is the sibling "<name>.minisig" entry from the same listing.
+		if m.verifyEnabled() {
+			sigURL, present := sigURLByName[f.Name+minisigSuffix]
+			if !present {
+				// No sibling signature listed at all.
+				if verr := m.signatureFailure(f.Name, "no sibling .minisig in listing"); verr != nil {
+					return Meta{}, verr
+				}
+			} else if verr := m.verifyBytes(ctx, f.Name, raw, sigURL); verr != nil {
+				return Meta{}, verr
+			}
+		}
+
 		cat, err := Parse(raw)
 		if err != nil {
 			return Meta{}, fmt.Errorf("parse %s: %w", f.Name, err)

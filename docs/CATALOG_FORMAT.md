@@ -65,6 +65,61 @@ consistent `schema_version` across files).
 Freshness is governed by a TTL (config `catalog.freshness_ttl`); `guardian status` and
 `guardian doctor` report whether the active catalog is fresh or stale.
 
+## Signature verification (optional)
+
+guardian can verify fetched catalog feeds against a trusted
+[minisign](https://jedisct1.github.io/minisign/) public key. It is **verify-only and
+compatible with the standard `minisign` CLI** (and OpenBSD `signify` detached signatures);
+guardian never signs. Both legacy/pure (`Ed`) and prehashed (`ED`, BLAKE2b-512) signatures
+are supported, and the minisign **trusted comment** is verified via its global signature.
+
+### Convention: sibling `.minisig`
+
+A detached signature lives next to the file it signs, with a `.minisig` suffix:
+
+- **Single-file source** (`source_url` ends in `.json`): guardian fetches
+  `<source_url>.minisig`.
+- **Directory source** (GitHub Contents API listing): for each `X.json` in the listing,
+  guardian looks for `X.json.minisig` **in the same listing** and fetches its `download_url`.
+
+Verification runs on the **exact bytes that will be cached**, before anything is written to
+the cache.
+
+### Config
+
+| Key | Env | Values | Notes |
+|-----|-----|--------|-------|
+| `catalog.verify` | `GUARDIAN_CATALOG_VERIFY` | `off` (default), `warn`, `require` | See modes below. |
+| `catalog.public_key` | `GUARDIAN_CATALOG_PUBLIC_KEY` | path **or** inline key | Required when `verify: require`. Accepts a path to a minisign `.pub` file or the inline key text; guardian auto-detects which. |
+
+Modes:
+
+- **`off`** — skip verification entirely (the default upstream feed is unsigned).
+- **`warn`** — verify when a signature is available; on a missing or invalid signature, log
+  a warning and proceed.
+- **`require`** — every catalog file must have a valid signature from the trusted key; any
+  missing/invalid/wrong-key signature **aborts the update and caches nothing**.
+
+### Signing a feed (with the standard `minisign` CLI)
+
+```sh
+# one-time: generate a keypair
+minisign -G -p feed.pub -s feed.key
+
+# sign each published catalog file (produces <file>.minisig next to it)
+minisign -Sm catalog.json -s feed.key
+# ...repeat for every X.json in a directory feed
+```
+
+Publish each `X.json` alongside its `X.json.minisig`, then point guardian at the feed:
+
+```yaml
+catalog:
+  source_url: https://example.com/feeds/catalog.json   # or a directory listing
+  verify: require
+  public_key: /etc/guardian/feed.pub                   # path, or inline "RWQ..." key text
+```
+
 ## Validation
 
 guardian rejects a catalog that: isn't a JSON object with `schema_version` + `entries`;

@@ -37,7 +37,7 @@ func newCatalogUpdateCmd() *cobra.Command {
 			if err := cfg.Validate(); err != nil {
 				return err
 			}
-			mgr, err := newCatalogManager(cfg, false)
+			mgr, err := newCatalogManager(cfg, false, os.Stderr)
 			if err != nil {
 				return err
 			}

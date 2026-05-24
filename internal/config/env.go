@@ -14,6 +14,8 @@ const (
 	EnvCatalogSourceURL       = "GUARDIAN_CATALOG_SOURCE_URL"       //
 	EnvCatalogFreshnessTTL    = "GUARDIAN_CATALOG_FRESHNESS_TTL"    // Go duration, e.g. 24h
 	EnvCatalogCacheDir        = "GUARDIAN_CATALOG_CACHE_DIR"        //
+	EnvCatalogVerify          = "GUARDIAN_CATALOG_VERIFY"           // off|warn|require
+	EnvCatalogPublicKey       = "GUARDIAN_CATALOG_PUBLIC_KEY"       // path or inline minisign key
 	EnvNotifyChannels         = "GUARDIAN_NOTIFY_CHANNELS"          // comma-separated
 	EnvNotifyWebhookURL       = "GUARDIAN_NOTIFY_WEBHOOK_URL"       //
 	EnvNotifyMinSeverity      = "GUARDIAN_NOTIFY_MIN_SEVERITY"      //
@@ -55,6 +57,12 @@ func overlayEnv(cfg *Config, environ []string) error {
 	}
 	if v, ok := env[EnvCatalogCacheDir]; ok {
 		cfg.Catalog.CacheDir = v
+	}
+	if v, ok := env[EnvCatalogVerify]; ok {
+		cfg.Catalog.Verify = v
+	}
+	if v, ok := env[EnvCatalogPublicKey]; ok {
+		cfg.Catalog.PublicKey = v
 	}
 	if v, ok := env[EnvNotifyChannels]; ok {
 		cfg.Notify.Channels = splitCSV(v)
