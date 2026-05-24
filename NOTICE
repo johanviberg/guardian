@@ -1,0 +1,13 @@
+guardian
+Copyright 2026 Johan Viberg
+
+This product includes software developed at Perplexity AI, Inc.
+
+It embeds a vendored copy of Bumblebee (https://github.com/perplexityai/bumblebee),
+licensed under the Apache License, Version 2.0. The vendored source lives under
+internal/bumblebee/; its original license is preserved at internal/bumblebee/LICENSE
+and the pinned upstream revision is recorded in internal/bumblebee/UPSTREAM.txt.
+
+The exposure catalogs embedded under internal/catalog/builtin/catalogs/ are a snapshot
+of Bumblebee's threat_intel/ directory and are likewise covered by the upstream
+Apache-2.0 license.
