@@ -1,0 +1,15 @@
+guardian status — laptop
+catalog:   2026.05.20 (fresh)
+last scan: 2026-05-24 11:00:00 UTC
+
+CONFIRMED MALICIOUS (1)
+  [CRITICAL]  MAL-2026-104  npm:evil-pkg@1.2.3  /proj/package-lock.json
+
+VULNERABLE (1)
+  [HIGH]  CVE-2026-2222  pypi:requests@2.0.0  /proj/requirements.txt
+
+INFORMATIONAL (1)
+  [INFO]  INFO-001  vscode:some.extension@0.1.0  ~/.vscode/extensions (suppressed)
+
+
+findings: 1 critical, 1 high, 1 info

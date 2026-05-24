@@ -1,0 +1,18 @@
+Vendored from: https://github.com/perplexityai/bumblebee
+Ref:           main
+Commit:        611dc7920847802627cec45a4476cc1ff4343e3a
+Vendored on:   2026-05-24
+License:       Apache-2.0 (see LICENSE)
+
+This directory contains a vendored copy of Perplexity's Bumblebee scanner.
+Every Go import path has been rewritten from
+  github.com/perplexityai/bumblebee/...
+to
+  github.com/rmxventures/guardian/internal/bumblebee/...
+
+Do NOT edit the vendored source by hand. Re-sync with:
+  hack/sync-upstream.sh <tag-or-sha>
+
+The hand-written exported shim package internal/bumblebee/engine/ is NOT
+part of the vendored tree and is preserved across re-syncs. It is the only
+sanctioned programmatic entry point into the vendored scanner.

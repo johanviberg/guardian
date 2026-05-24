@@ -1,0 +1,5 @@
+guardian status — laptop
+catalog:   2026.05.20 (STALE)
+last scan: never
+
+no active exposures.

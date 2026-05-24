@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "command": "scan",
+  "generated_at": "2026-05-24T12:00:00Z",
+  "data": {
+    "profile": "baseline",
+    "host": "laptop",
+    "catalog_version": "2026.05.20",
+    "scanned_at": "2026-05-24T11:00:00Z",
+    "component_count": 42,
+    "findings": [
+      {
+        "catalog_id": "MAL-2026-104",
+        "severity": "critical",
+        "class": "confirmed-malicious",
+        "ecosystem": "npm",
+        "name": "evil-pkg",
+        "version": "1.2.3",
+        "source_file": "/proj/package-lock.json",
+        "evidence_type": "exact-version-match",
+        "confidence": 1,
+        "suppressed": false
+      },
+      {
+        "catalog_id": "CVE-2026-2222",
+        "severity": "high",
+        "class": "vulnerable",
+        "ecosystem": "pypi",
+        "name": "requests",
+        "version": "2.0.0",
+        "source_file": "/proj/requirements.txt",
+        "evidence_type": "exact-version-match",
+        "confidence": 0.9,
+        "suppressed": false
+      },
+      {
+        "catalog_id": "INFO-001",
+        "severity": "info",
+        "class": "informational",
+        "ecosystem": "vscode",
+        "name": "some.extension",
+        "version": "0.1.0",
+        "source_file": "~/.vscode/extensions",
+        "evidence_type": "",
+        "confidence": 0.5,
+        "suppressed": true
+      }
+    ],
+    "counts": {
+      "critical": 1,
+      "high": 1,
+      "medium": 0,
+      "low": 0,
+      "info": 1
+    },
+    "exit_code": 2
+  }
+}
