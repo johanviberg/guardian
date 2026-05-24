@@ -9,7 +9,7 @@ package scanner
 import (
 	"context"
 
-	"github.com/rmxventures/guardian/internal/model"
+	"github.com/johanviberg/guardian/internal/model"
 )
 
 // Options configures a single scan invocation.

@@ -9,7 +9,7 @@
 // via the Suppressor function type rather than imported.
 package policy
 
-import "github.com/rmxventures/guardian/internal/model"
+import "github.com/johanviberg/guardian/internal/model"
 
 // Classify returns the policy Class for a single finding.
 //

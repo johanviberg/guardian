@@ -7,8 +7,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/rmxventures/guardian/internal/config"
-	"github.com/rmxventures/guardian/internal/report"
+	"github.com/johanviberg/guardian/internal/config"
+	"github.com/johanviberg/guardian/internal/report"
 )
 
 func newStatusCmd() *cobra.Command {

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rmxventures/guardian/internal/model"
+	"github.com/johanviberg/guardian/internal/model"
 )
 
 // fakeNotifier records calls and optionally errors.

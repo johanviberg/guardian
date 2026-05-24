@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/rmxventures/guardian/internal/model"
+	"github.com/johanviberg/guardian/internal/model"
 )
 
 func f(catalog, eco, name, ver, src string) model.Finding {

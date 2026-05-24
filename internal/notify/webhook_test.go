@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/rmxventures/guardian/internal/model"
+	"github.com/johanviberg/guardian/internal/model"
 )
 
 func TestWebhookGenericPayload(t *testing.T) {

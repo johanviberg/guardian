@@ -20,8 +20,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/rmxventures/guardian/internal/bumblebee/internal/model"
-	"github.com/rmxventures/guardian/internal/bumblebee/internal/normalize"
+	"github.com/johanviberg/guardian/internal/bumblebee/internal/model"
+	"github.com/johanviberg/guardian/internal/bumblebee/internal/normalize"
 )
 
 const Ecosystem = model.EcosystemNPM

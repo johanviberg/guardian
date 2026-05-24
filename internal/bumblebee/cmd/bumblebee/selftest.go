@@ -11,11 +11,11 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/rmxventures/guardian/internal/bumblebee/internal/endpoint"
-	"github.com/rmxventures/guardian/internal/bumblebee/internal/exposure"
-	"github.com/rmxventures/guardian/internal/bumblebee/internal/model"
-	"github.com/rmxventures/guardian/internal/bumblebee/internal/output"
-	"github.com/rmxventures/guardian/internal/bumblebee/internal/scanner"
+	"github.com/johanviberg/guardian/internal/bumblebee/internal/endpoint"
+	"github.com/johanviberg/guardian/internal/bumblebee/internal/exposure"
+	"github.com/johanviberg/guardian/internal/bumblebee/internal/model"
+	"github.com/johanviberg/guardian/internal/bumblebee/internal/output"
+	"github.com/johanviberg/guardian/internal/bumblebee/internal/scanner"
 )
 
 //go:embed selftest/fixtures selftest/catalog.json

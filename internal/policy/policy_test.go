@@ -3,7 +3,7 @@ package policy
 import (
 	"testing"
 
-	"github.com/rmxventures/guardian/internal/model"
+	"github.com/johanviberg/guardian/internal/model"
 )
 
 func TestClassify(t *testing.T) {

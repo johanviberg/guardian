@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rmxventures/guardian/internal/bumblebee/internal/model"
-	"github.com/rmxventures/guardian/internal/bumblebee/internal/output"
+	"github.com/johanviberg/guardian/internal/bumblebee/internal/model"
+	"github.com/johanviberg/guardian/internal/bumblebee/internal/output"
 )
 
 // TestExpandedEcosystems exercises end-to-end dispatch for every ecosystem

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/rmxventures/guardian/internal/bumblebee/internal/model"
+	"github.com/johanviberg/guardian/internal/bumblebee/internal/model"
 )
 
 func writeFile(t *testing.T, path, body string) {

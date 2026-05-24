@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/rmxventures/guardian/internal/model"
+	"github.com/johanviberg/guardian/internal/model"
 )
 
 // Result is the set-difference of a current run against a previous run.

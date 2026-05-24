@@ -30,7 +30,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/rmxventures/guardian/internal/bumblebee/internal/model"
+	"github.com/johanviberg/guardian/internal/bumblebee/internal/model"
 )
 
 const Ecosystem = model.EcosystemBrowserExtension

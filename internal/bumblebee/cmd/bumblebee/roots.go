@@ -33,8 +33,8 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/rmxventures/guardian/internal/bumblebee/internal/model"
-	"github.com/rmxventures/guardian/internal/bumblebee/internal/scanner"
+	"github.com/johanviberg/guardian/internal/bumblebee/internal/model"
+	"github.com/johanviberg/guardian/internal/bumblebee/internal/scanner"
 )
 
 // rootsOpts groups the scoping inputs to resolveRoots. Adding a new

@@ -5,7 +5,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/rmxventures/guardian/internal/model"
+	"github.com/johanviberg/guardian/internal/model"
 )
 
 func TestTerminalNotifierGolden(t *testing.T) {

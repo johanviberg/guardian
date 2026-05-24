@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/rmxventures/guardian/internal/bumblebee/internal/model"
+	"github.com/johanviberg/guardian/internal/bumblebee/internal/model"
 )
 
 // StatsReporter reports transport-side counters that can be copied into

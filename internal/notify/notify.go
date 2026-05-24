@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rmxventures/guardian/internal/model"
+	"github.com/johanviberg/guardian/internal/model"
 )
 
 // Notification is a single alert to be delivered across channels.

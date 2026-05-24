@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/rmxventures/guardian/internal/bumblebee/internal/model"
+	"github.com/johanviberg/guardian/internal/bumblebee/internal/model"
 )
 
 func newCollector() (*Scanner, *[]model.Record, *[]string) {

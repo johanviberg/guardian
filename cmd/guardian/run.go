@@ -10,8 +10,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/rmxventures/guardian/internal/config"
-	"github.com/rmxventures/guardian/internal/model"
+	"github.com/johanviberg/guardian/internal/config"
+	"github.com/johanviberg/guardian/internal/model"
 )
 
 // defaultDaemonInterval is used when the baseline schedule is unset/zero.

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rmxventures/guardian/internal/model"
+	"github.com/johanviberg/guardian/internal/model"
 )
 
 // defaultWebhookTimeout bounds a single delivery attempt when the caller's

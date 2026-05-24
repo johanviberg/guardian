@@ -6,8 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/rmxventures/guardian/internal/config"
-	"github.com/rmxventures/guardian/internal/service"
+	"github.com/johanviberg/guardian/internal/config"
+	"github.com/johanviberg/guardian/internal/service"
 )
 
 // serviceLabel is the reverse-DNS identifier for the installed unit.

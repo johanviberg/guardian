@@ -8,8 +8,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/rmxventures/guardian/internal/bumblebee/engine"
-	"github.com/rmxventures/guardian/internal/model"
+	"github.com/johanviberg/guardian/internal/bumblebee/engine"
+	"github.com/johanviberg/guardian/internal/model"
 )
 
 // VendoredScanner drives the in-tree Bumblebee fork via the

@@ -1,4 +1,4 @@
-module github.com/rmxventures/guardian
+module github.com/johanviberg/guardian
 
 go 1.26.3
 

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rmxventures/guardian/internal/model"
+	"github.com/johanviberg/guardian/internal/model"
 )
 
 var update = flag.Bool("update", false, "update golden files")

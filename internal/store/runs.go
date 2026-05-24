@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/rmxventures/guardian/internal/model"
+	"github.com/johanviberg/guardian/internal/model"
 )
 
 // SaveRun inserts a scan run together with its components and findings inside a

@@ -9,9 +9,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/rmxventures/guardian/internal/config"
-	"github.com/rmxventures/guardian/internal/report"
-	"github.com/rmxventures/guardian/internal/scanner"
+	"github.com/johanviberg/guardian/internal/config"
+	"github.com/johanviberg/guardian/internal/report"
+	"github.com/johanviberg/guardian/internal/scanner"
 )
 
 // checkResult is one diagnostic check outcome. A failing critical check makes

@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/rmxventures/guardian/internal/bumblebee/internal/output"
+	"github.com/johanviberg/guardian/internal/bumblebee/internal/output"
 )
 
 // sinkHTTPOpts groups the HTTP-specific options for --output=http so the

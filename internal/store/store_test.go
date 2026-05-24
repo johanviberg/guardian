@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rmxventures/guardian/internal/model"
+	"github.com/johanviberg/guardian/internal/model"
 )
 
 func tempStore(t *testing.T) *Store {

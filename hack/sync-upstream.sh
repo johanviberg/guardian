@@ -35,7 +35,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 VENDOR_DIR="${REPO_ROOT}/internal/bumblebee"
 OLD_MODULE="github.com/perplexityai/bumblebee"
-NEW_MODULE="github.com/rmxventures/guardian/internal/bumblebee"
+NEW_MODULE="github.com/johanviberg/guardian/internal/bumblebee"
 
 # Files/dirs that make up the vendored upstream tree. The hand-written
 # engine/ shim and UPSTREAM.txt are intentionally excluded so a re-sync

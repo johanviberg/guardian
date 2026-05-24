@@ -9,8 +9,7 @@ Bumblebee answers *"what packages, extensions, and tools are on this machine?"*
 time, and who should know?"* — entirely on your machine. No account, no telemetry, no
 hosted backend.
 
-> **Status:** v1, pre-release. Module path `github.com/rmxventures/guardian` is a working
-> placeholder.
+> **Status:** v1, pre-release. Module path: `github.com/johanviberg/guardian`.
 
 ## Security posture
 
@@ -34,7 +33,7 @@ See [SECURITY.md](SECURITY.md) for the vulnerability-reporting policy and threat
 ## Install
 
 ```sh
-go install github.com/rmxventures/guardian/cmd/guardian@latest
+go install github.com/johanviberg/guardian/cmd/guardian@latest
 ```
 
 Or build from source:

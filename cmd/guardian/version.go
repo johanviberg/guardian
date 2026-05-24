@@ -3,7 +3,7 @@ package main
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/rmxventures/guardian/internal/scanner"
+	"github.com/johanviberg/guardian/internal/scanner"
 )
 
 // Version is the guardian binary version. Override at build time with:

@@ -10,16 +10,16 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/rmxventures/guardian/internal/catalog"
-	"github.com/rmxventures/guardian/internal/catalog/builtin"
-	"github.com/rmxventures/guardian/internal/config"
-	"github.com/rmxventures/guardian/internal/diff"
-	"github.com/rmxventures/guardian/internal/model"
-	"github.com/rmxventures/guardian/internal/notify"
-	"github.com/rmxventures/guardian/internal/policy"
-	"github.com/rmxventures/guardian/internal/report"
-	"github.com/rmxventures/guardian/internal/scanner"
-	"github.com/rmxventures/guardian/internal/store"
+	"github.com/johanviberg/guardian/internal/catalog"
+	"github.com/johanviberg/guardian/internal/catalog/builtin"
+	"github.com/johanviberg/guardian/internal/config"
+	"github.com/johanviberg/guardian/internal/diff"
+	"github.com/johanviberg/guardian/internal/model"
+	"github.com/johanviberg/guardian/internal/notify"
+	"github.com/johanviberg/guardian/internal/policy"
+	"github.com/johanviberg/guardian/internal/report"
+	"github.com/johanviberg/guardian/internal/scanner"
+	"github.com/johanviberg/guardian/internal/store"
 )
 
 // scanFlags holds the user-facing flags that influence a scan pipeline run.
