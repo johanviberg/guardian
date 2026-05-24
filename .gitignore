@@ -1,0 +1,5 @@
+/guardian
+/dist/
+*.db
+*.ndjson
+.DS_Store
