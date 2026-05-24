@@ -17,6 +17,7 @@ func newScanCmd() *cobra.Command {
 		asJSON       bool
 		doNotify     bool
 		noFetch      bool
+		doEnrich     bool
 	)
 
 	cmd := &cobra.Command{
@@ -49,6 +50,7 @@ func newScanCmd() *cobra.Command {
 				json:         asJSON,
 				notify:       doNotify,
 				noFetch:      noFetch,
+				enrich:       doEnrich,
 			}
 
 			outcome, err := runScanPipeline(ctx, cfg, profile, f, os.Stderr)
@@ -78,5 +80,6 @@ func newScanCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit the stable JSON envelope")
 	cmd.Flags().BoolVar(&doNotify, "notify", false, "dispatch notifications for new findings")
 	cmd.Flags().BoolVar(&noFetch, "no-fetch", false, "do not fetch the catalog; use the cached copy")
+	cmd.Flags().BoolVar(&doEnrich, "enrich", false, "enable OSV vulnerability enrichment (off by default; informational unless enrich.fail_on is set)")
 	return cmd
 }

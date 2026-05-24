@@ -40,12 +40,12 @@ func sampleRun() *model.ScanRun {
 			{
 				CatalogID: "MAL-2026-104", Severity: model.SeverityCritical, Class: model.ClassConfirmedMalicious,
 				Ecosystem: "npm", Name: "evil-pkg", Version: "6.6.6", SourceFile: "package-lock.json",
-				EvidenceType: "exact-version-match", Confidence: 1.0, Suppressed: false,
+				EvidenceType: "exact-version-match", Confidence: 1.0, Suppressed: false, Source: model.SourceCatalog,
 			},
 			{
 				CatalogID: "CVE-2026-9", Severity: model.SeverityMedium, Class: model.ClassVulnerable,
 				Ecosystem: "pypi", Name: "requests", Version: "2.31.0", SourceFile: "requirements.txt",
-				EvidenceType: "exact-version-match", Confidence: 0.8, Suppressed: true,
+				EvidenceType: "exact-version-match", Confidence: 0.8, Suppressed: true, Source: model.SourceCatalog,
 			},
 		},
 	}
@@ -140,6 +140,125 @@ func TestSaveRunRoundTrip(t *testing.T) {
 				t.Errorf("Findings = %+v, want %+v", got.Findings, in.Findings)
 			}
 		})
+	}
+}
+
+// TestSourceSummaryRoundTrip verifies the v2 source/summary columns round-trip,
+// including OSV findings, and that an empty Source reads back as "catalog".
+func TestSourceSummaryRoundTrip(t *testing.T) {
+	s := tempStore(t)
+	ctx := context.Background()
+
+	run := sampleRun()
+	run.Findings = append(run.Findings, model.Finding{
+		CatalogID: "CVE-2021-23337", Severity: model.SeverityHigh, Class: model.ClassVulnerable,
+		Ecosystem: "npm", Name: "lodash", Version: "4.17.15", SourceFile: "package-lock.json",
+		EvidenceType: "osv", Confidence: 1.0, Source: model.SourceOSV,
+		Summary: "Command injection in lodash",
+	})
+	// A finding with an empty Source must read back as "catalog".
+	run.Findings = append(run.Findings, model.Finding{
+		CatalogID: "MAL-2026-200", Severity: model.SeverityCritical, Class: model.ClassConfirmedMalicious,
+		Ecosystem: "npm", Name: "no-source", Version: "1.0.0", SourceFile: "package-lock.json",
+		EvidenceType: "exact-version-match", Confidence: 1.0,
+	})
+
+	id, err := s.SaveRun(ctx, run)
+	if err != nil {
+		t.Fatalf("SaveRun: %v", err)
+	}
+	got, err := s.GetRun(ctx, id)
+	if err != nil {
+		t.Fatalf("GetRun: %v", err)
+	}
+
+	byName := map[string]model.Finding{}
+	for _, f := range got.Findings {
+		byName[f.Name] = f
+	}
+	if f := byName["lodash"]; f.Source != model.SourceOSV || f.Summary != "Command injection in lodash" {
+		t.Errorf("osv finding round-trip: source=%q summary=%q", f.Source, f.Summary)
+	}
+	if f := byName["no-source"]; f.Source != model.SourceCatalog {
+		t.Errorf("empty-source finding read back source=%q, want %q", f.Source, model.SourceCatalog)
+	}
+	if f := byName["evil-pkg"]; f.Source != model.SourceCatalog || f.Summary != "" {
+		t.Errorf("catalog finding round-trip: source=%q summary=%q", f.Source, f.Summary)
+	}
+}
+
+// TestMigrationUpgradeFromV1 simulates a database created before the v2
+// source/summary columns existed and verifies that migrate adds them with the
+// expected defaults, leaving pre-existing rows readable as "catalog".
+func TestMigrationUpgradeFromV1(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "guardian.db")
+
+	// Build a v1-shaped database by applying only migration1 and stamping
+	// user_version = 1, then insert a finding with the v1 column set.
+	{
+		s, err := Open(path)
+		if err != nil {
+			t.Fatalf("Open: %v", err)
+		}
+		// Drop the v2 columns to emulate a genuinely old DB. SQLite supports
+		// DROP COLUMN since 3.35; modernc.org/sqlite is well past that.
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE findings DROP COLUMN summary`); err != nil {
+			t.Fatalf("drop summary: %v", err)
+		}
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE findings DROP COLUMN source`); err != nil {
+			t.Fatalf("drop source: %v", err)
+		}
+		if _, err := s.db.ExecContext(ctx, `PRAGMA user_version = 1`); err != nil {
+			t.Fatalf("set user_version: %v", err)
+		}
+		// Insert a v1-shaped finding row (no source/summary columns).
+		res, err := s.db.ExecContext(ctx, `
+			INSERT INTO scan_runs
+				(started_at, finished_at, profile, roots_json, catalog_version, host, scanner_version, exit_code)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			formatTime(time.Now()), formatTime(time.Now()), "baseline", "[]", "v1", "host", "v1", 1)
+		if err != nil {
+			t.Fatalf("insert run: %v", err)
+		}
+		runID, _ := res.LastInsertId()
+		if _, err := s.db.ExecContext(ctx, `
+			INSERT INTO findings
+				(run_id, catalog_id, ecosystem, name, version, severity, evidence_type, confidence, class, source_file, suppressed)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			runID, "CVE-OLD", "npm", "oldpkg", "1.0.0", "high", "exact-version-match", 1.0, "vulnerable", "pkg.json", 0); err != nil {
+			t.Fatalf("insert v1 finding: %v", err)
+		}
+		_ = s.Close()
+	}
+
+	// Reopen: migrate must advance to v2 and add the columns with defaults.
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer s.Close()
+
+	var uv int
+	if err := s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&uv); err != nil {
+		t.Fatalf("user_version: %v", err)
+	}
+	if uv != schemaVersion {
+		t.Fatalf("user_version = %d, want %d", uv, schemaVersion)
+	}
+
+	finds, err := s.findingsForRun(ctx, 1)
+	if err != nil {
+		t.Fatalf("findingsForRun: %v", err)
+	}
+	if len(finds) != 1 {
+		t.Fatalf("got %d findings, want 1", len(finds))
+	}
+	if finds[0].Source != model.SourceCatalog {
+		t.Errorf("upgraded v1 finding source = %q, want %q", finds[0].Source, model.SourceCatalog)
+	}
+	if finds[0].Summary != "" {
+		t.Errorf("upgraded v1 finding summary = %q, want empty", finds[0].Summary)
 	}
 }
 

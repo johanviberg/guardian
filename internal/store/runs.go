@@ -56,12 +56,17 @@ func (s *Store) SaveRun(ctx context.Context, run *model.ScanRun) (int64, error) 
 	}
 
 	for i, f := range run.Findings {
+		source := f.Source
+		if source == "" {
+			source = model.SourceCatalog
+		}
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO findings
-				(run_id, catalog_id, ecosystem, name, version, severity, evidence_type, confidence, class, source_file, suppressed)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				(run_id, catalog_id, ecosystem, name, version, severity, evidence_type, confidence, class, source_file, suppressed, source, summary)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			runID, f.CatalogID, f.Ecosystem, f.Name, f.Version, string(f.Severity),
 			f.EvidenceType, f.Confidence, string(f.Class), f.SourceFile, boolToInt(f.Suppressed),
+			string(source), f.Summary,
 		); err != nil {
 			return 0, fmt.Errorf("store: insert finding %d: %w", i, err)
 		}
@@ -221,7 +226,7 @@ func (s *Store) componentsForRun(ctx context.Context, runID int64) ([]model.Comp
 
 func (s *Store) findingsForRun(ctx context.Context, runID int64) ([]model.Finding, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT catalog_id, ecosystem, name, version, severity, evidence_type, confidence, class, source_file, suppressed
+		SELECT catalog_id, ecosystem, name, version, severity, evidence_type, confidence, class, source_file, suppressed, source, summary
 		FROM findings WHERE run_id = ? ORDER BY id ASC`, runID)
 	if err != nil {
 		return nil, err
@@ -235,14 +240,19 @@ func (s *Store) findingsForRun(ctx context.Context, runID int64) ([]model.Findin
 			severity   string
 			class      string
 			suppressed int
+			source     string
 		)
 		if err := rows.Scan(&f.CatalogID, &f.Ecosystem, &f.Name, &f.Version, &severity,
-			&f.EvidenceType, &f.Confidence, &class, &f.SourceFile, &suppressed); err != nil {
+			&f.EvidenceType, &f.Confidence, &class, &f.SourceFile, &suppressed, &source, &f.Summary); err != nil {
 			return nil, err
 		}
 		f.Severity = model.Severity(severity)
 		f.Class = model.Class(class)
 		f.Suppressed = suppressed != 0
+		if source == "" {
+			source = string(model.SourceCatalog)
+		}
+		f.Source = model.Source(source)
 		out = append(out, f)
 	}
 	return out, rows.Err()

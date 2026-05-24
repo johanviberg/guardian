@@ -158,11 +158,31 @@ func (r Renderer) renderFindingTable(w io.Writer, findings []model.Finding) {
 		if f.Suppressed {
 			sup = " (suppressed)"
 		}
-		fmt.Fprintf(tw, "  %s\t%s\t%s@%s\t%s%s\n",
+		// Tag enrichment (OSV) findings so it is clear they are informational and
+		// distinct from catalog matches.
+		src := ""
+		if f.Source == model.SourceOSV {
+			src = " [osv]"
+		}
+		fmt.Fprintf(tw, "  %s\t%s\t%s@%s\t%s%s%s\n",
 			r.severityTag(f.Severity), f.CatalogID,
-			ecoName(f), f.Version, f.SourceFile, sup)
+			ecoName(f), f.Version, f.SourceFile, src, sup)
+		if f.Summary != "" {
+			fmt.Fprintf(tw, "  \t\t%s\t\n", truncateSummary(f.Summary))
+		}
 	}
 	_ = tw.Flush()
+}
+
+// truncateSummary shortens a possibly-long advisory summary to a single tidy
+// line for terminal output.
+func truncateSummary(s string) string {
+	s = strings.TrimSpace(strings.ReplaceAll(s, "\n", " "))
+	const max = 100
+	if len(s) > max {
+		return s[:max-1] + "…"
+	}
+	return s
 }
 
 func (r Renderer) renderDiffBucket(w io.Writer, title, marker string, findings []model.Finding) {

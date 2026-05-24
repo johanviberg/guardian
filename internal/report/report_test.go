@@ -180,3 +180,37 @@ func TestColorEnabled(t *testing.T) {
 		t.Errorf("default should be colorless: %q", plain)
 	}
 }
+
+func TestRenderScanOSVTagAndSummary(t *testing.T) {
+	var buf bytes.Buffer
+	v := ScanView{
+		Profile: model.ProfileBaseline, Host: "laptop",
+		CatalogVersion: "2026.05.20",
+		ComponentCount: 3,
+		Findings: []model.Finding{
+			{
+				CatalogID: "CVE-2021-23337", Severity: model.SeverityHigh,
+				Class: model.ClassVulnerable, Ecosystem: "npm", Name: "lodash",
+				Version: "4.17.15", SourceFile: "/proj/package-lock.json",
+				EvidenceType: "osv", Source: model.SourceOSV,
+				Summary: "Command injection via template",
+			},
+		},
+		Counts:   Counts{High: 1},
+		ExitCode: 0,
+	}
+	if err := (Renderer{}).RenderScan(&buf, v); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !bytes.Contains(buf.Bytes(), []byte("[osv]")) {
+		t.Errorf("OSV finding not tagged [osv]:\n%s", out)
+	}
+	if !bytes.Contains(buf.Bytes(), []byte("Command injection via template")) {
+		t.Errorf("OSV summary not rendered:\n%s", out)
+	}
+	// OSV finding renders under the VULNERABLE group.
+	if !bytes.Contains(buf.Bytes(), []byte("VULNERABLE")) {
+		t.Errorf("expected VULNERABLE group:\n%s", out)
+	}
+}

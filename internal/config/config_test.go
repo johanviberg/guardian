@@ -621,3 +621,106 @@ catalog:
 		t.Errorf("env should override file for freshness_ttl: %s", cfg.Catalog.FreshnessTTL)
 	}
 }
+
+func TestEnrichDefaults(t *testing.T) {
+	isolateEnv(t)
+	d := Defaults()
+	if d.Enrich.Enabled {
+		t.Error("enrich.enabled default = true, want false")
+	}
+	if len(d.Enrich.Sources) != 1 || d.Enrich.Sources[0] != "osv" {
+		t.Errorf("enrich.sources default = %v, want [osv]", d.Enrich.Sources)
+	}
+	if d.Enrich.FailOn != "" {
+		t.Errorf("enrich.fail_on default = %q, want empty", d.Enrich.FailOn)
+	}
+	if d.Enrich.CacheTTL != DefaultEnrichCacheTTL {
+		t.Errorf("enrich.cache_ttl default = %s, want %s", d.Enrich.CacheTTL, DefaultEnrichCacheTTL)
+	}
+}
+
+func TestEnrichYAMLParsing(t *testing.T) {
+	isolateEnv(t)
+	writeConfig(t, `
+enrich:
+  enabled: true
+  sources: [osv]
+  fail_on: high
+  cache_ttl: 12h
+`)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Enrich.Enabled {
+		t.Error("enrich.enabled = false, want true")
+	}
+	if cfg.Enrich.FailOn != "high" {
+		t.Errorf("enrich.fail_on = %q, want high", cfg.Enrich.FailOn)
+	}
+	if cfg.Enrich.CacheTTL != 12*time.Hour {
+		t.Errorf("enrich.cache_ttl = %s, want 12h", cfg.Enrich.CacheTTL)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate: %v", err)
+	}
+}
+
+func TestEnrichEnvOverride(t *testing.T) {
+	isolateEnv(t)
+	t.Setenv("GUARDIAN_ENRICH_ENABLED", "true")
+	t.Setenv("GUARDIAN_ENRICH_FAIL_ON", "critical")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Enrich.Enabled {
+		t.Error("env GUARDIAN_ENRICH_ENABLED did not enable enrichment")
+	}
+	if cfg.Enrich.FailOn != "critical" {
+		t.Errorf("env fail_on = %q, want critical", cfg.Enrich.FailOn)
+	}
+}
+
+func TestEnrichValidation(t *testing.T) {
+	isolateEnv(t)
+
+	// Invalid fail_on rejected.
+	c := Defaults()
+	c.Enrich.FailOn = "bogus"
+	if err := c.Validate(); err == nil {
+		t.Error("Validate accepted invalid enrich.fail_on")
+	}
+
+	// Empty fail_on is valid.
+	c = Defaults()
+	c.Enrich.FailOn = ""
+	if err := c.Validate(); err != nil {
+		t.Errorf("Validate rejected empty fail_on: %v", err)
+	}
+
+	// Valid severity accepted.
+	c = Defaults()
+	c.Enrich.FailOn = "medium"
+	if err := c.Validate(); err != nil {
+		t.Errorf("Validate rejected valid fail_on: %v", err)
+	}
+
+	// Negative cache_ttl rejected.
+	c = Defaults()
+	c.Enrich.CacheTTL = -time.Hour
+	if err := c.Validate(); err == nil {
+		t.Error("Validate accepted negative cache_ttl")
+	}
+}
+
+func TestEnrichUnknownKeyRejected(t *testing.T) {
+	isolateEnv(t)
+	writeConfig(t, `
+enrich:
+  bogus_key: true
+`)
+	if _, err := Load(); err == nil {
+		t.Error("Load accepted unknown enrich key (KnownFields should reject)")
+	}
+}

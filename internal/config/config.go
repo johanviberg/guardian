@@ -35,6 +35,8 @@ const (
 	DefaultRetentionComponentDays = 30
 	// DefaultMinSeverity gates notifications at and above this severity.
 	DefaultMinSeverity = "critical"
+	// DefaultEnrichCacheTTL is how long a cached OSV vuln detail is reused.
+	DefaultEnrichCacheTTL = 24 * time.Hour
 	// configDirName is the per-app subdirectory used under every base dir.
 	appDirName = "guardian"
 	// configFileName is the YAML config file name.
@@ -140,6 +142,24 @@ type NotifyConfig struct {
 	QuietHours  QuietHours `json:"quiet_hours" yaml:"quiet_hours"`   //
 }
 
+// EnrichConfig configures optional vulnerability enrichment. Enrichment is
+// OPT-IN and OFF BY DEFAULT; when enabled, supported components are queried
+// against external advisory databases (currently OSV at api.osv.dev). Results
+// are INFORMATIONAL by default and only escalate the exit code when FailOn is
+// set to a severity threshold.
+type EnrichConfig struct {
+	// Enabled turns enrichment on. Default false.
+	Enabled bool `json:"enabled" yaml:"enabled"`
+	// Sources selects enrichment backends. Default ["osv"].
+	Sources []string `json:"sources" yaml:"sources"`
+	// FailOn is the minimum severity at which an enrichment finding escalates
+	// the exit code to 1. Empty ("") means enrichment never gates (informational
+	// only). Valid values: "" or a severity.
+	FailOn string `json:"fail_on" yaml:"fail_on"`
+	// CacheTTL is how long cached advisory details are reused. Default 24h.
+	CacheTTL time.Duration `json:"cache_ttl" yaml:"cache_ttl"`
+}
+
 // RetentionConfig configures history pruning.
 type RetentionConfig struct {
 	ComponentDays int `json:"component_days" yaml:"component_days"`
@@ -154,6 +174,7 @@ type Config struct {
 
 	Catalog   CatalogConfig   `json:"catalog" yaml:"catalog"`
 	Notify    NotifyConfig    `json:"notify" yaml:"notify"`
+	Enrich    EnrichConfig    `json:"enrich" yaml:"enrich"`
 	Retention RetentionConfig `json:"retention" yaml:"retention"`
 
 	// Filesystem locations (resolved to OS-appropriate defaults).
@@ -182,6 +203,12 @@ func Defaults() *Config {
 		Notify: NotifyConfig{
 			Channels:    []string{"terminal"},
 			MinSeverity: DefaultMinSeverity,
+		},
+		Enrich: EnrichConfig{
+			Enabled:  false,
+			Sources:  []string{"osv"},
+			FailOn:   "",
+			CacheTTL: DefaultEnrichCacheTTL,
 		},
 		Retention: RetentionConfig{
 			ComponentDays: DefaultRetentionComponentDays,
@@ -319,6 +346,12 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("config: notify.quiet_hours.end: %w", err)
 		}
 	}
+	if c.Enrich.FailOn != "" && !validSeverity(c.Enrich.FailOn) {
+		return fmt.Errorf("config: enrich.fail_on %q must be empty or a valid severity", c.Enrich.FailOn)
+	}
+	if c.Enrich.CacheTTL < 0 {
+		return fmt.Errorf("config: enrich.cache_ttl must not be negative, got %s", c.Enrich.CacheTTL)
+	}
 	for profile, mins := range c.Schedule {
 		if mins < 0 {
 			return fmt.Errorf("config: schedule[%s] must not be negative, got %d", profile, mins)
@@ -450,6 +483,16 @@ func (c *Config) Effective() string {
 	} else {
 		w("  quiet_hours:   (disabled)\n")
 	}
+
+	w("enrich:\n")
+	w("  enabled:   %t\n", c.Enrich.Enabled)
+	w("  sources:   %s\n", strings.Join(c.Enrich.Sources, ", "))
+	if c.Enrich.FailOn == "" {
+		w("  fail_on:   (informational; never gates)\n")
+	} else {
+		w("  fail_on:   %s\n", c.Enrich.FailOn)
+	}
+	w("  cache_ttl: %s\n", c.Enrich.CacheTTL)
 
 	w("retention:\n")
 	w("  component_days: %d\n", c.Retention.ComponentDays)

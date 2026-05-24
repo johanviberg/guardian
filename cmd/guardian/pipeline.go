@@ -14,6 +14,7 @@ import (
 	"github.com/johanviberg/guardian/internal/catalog/builtin"
 	"github.com/johanviberg/guardian/internal/config"
 	"github.com/johanviberg/guardian/internal/diff"
+	"github.com/johanviberg/guardian/internal/enrich/osv"
 	"github.com/johanviberg/guardian/internal/model"
 	"github.com/johanviberg/guardian/internal/notify"
 	"github.com/johanviberg/guardian/internal/policy"
@@ -30,6 +31,7 @@ type scanFlags struct {
 	json         bool
 	notify       bool
 	noFetch      bool
+	enrich       bool // run OSV vulnerability enrichment (overrides cfg when true)
 }
 
 // scanOutcome bundles everything a single pipeline run produces, so callers
@@ -174,8 +176,16 @@ func runScanPipeline(ctx context.Context, cfg *config.Config, profile model.Prof
 	// The scanner does not populate CatalogVersion; the pipeline owns it.
 	result.CatalogVersion = catalogVer
 
-	// Classify, then load + apply suppressions.
+	// Classify the catalog findings.
 	result.Findings = policy.ClassifyAll(result.Findings)
+
+	// Optional enrichment: when active, query OSV for the scanned components and
+	// append the resulting (informational-by-default) findings. Enrichment must
+	// never fail the scan: on any error we warn and proceed with catalog-only.
+	if enrichActive(cfg, f.enrich) {
+		enriched := runEnrichment(ctx, cfg, result.Components, warn)
+		result.Findings = append(result.Findings, enriched...)
+	}
 
 	st, err := openStore(cfg)
 	if err != nil {
@@ -183,13 +193,18 @@ func runScanPipeline(ctx context.Context, cfg *config.Config, profile model.Prof
 	}
 	defer st.Close()
 
+	// Load + apply suppressions to the combined (catalog + enrichment) set, then
+	// re-classify so every finding (incl. enrichment) carries a Class.
 	sup, err := suppressorFromStore(ctx, st)
 	if err != nil {
 		return nil, err
 	}
 	result.Findings = policy.ApplySuppressions(result.Findings, sup)
+	result.Findings = policy.ClassifyAll(result.Findings)
 
-	exitCode := policy.ExitCode(result.Findings)
+	exitCode := policy.ExitCodeWithGate(result.Findings, policy.Gate{
+		EnrichFailOn: model.Severity(cfg.Enrich.FailOn),
+	})
 
 	run := &model.ScanRun{
 		StartedAt:  result.StartedAt,
@@ -233,6 +248,37 @@ func runScanPipeline(ctx context.Context, cfg *config.Config, profile model.Prof
 		catalogVer: catalogVer,
 		stale:      stale,
 	}, nil
+}
+
+// enrichActive reports whether enrichment should run: the --enrich flag forces
+// it on, otherwise cfg.Enrich.Enabled decides.
+func enrichActive(cfg *config.Config, flag bool) bool {
+	return flag || cfg.Enrich.Enabled
+}
+
+// runEnrichment builds the configured enrichers and returns their findings.
+// Errors are non-fatal: a soft failure (offline, rate-limited) is logged to warn
+// and any partial findings are still returned. Currently only the "osv" source
+// is supported; unknown sources are warned about and skipped.
+func runEnrichment(ctx context.Context, cfg *config.Config, comps []model.Component, warn io.Writer) []model.Finding {
+	cacheDir := filepath.Join(cfg.Catalog.CacheDir, "enrich", "osv")
+	client := &http.Client{Timeout: 30 * time.Second}
+
+	var out []model.Finding
+	for _, src := range cfg.Enrich.Sources {
+		switch src {
+		case "osv":
+			en := osv.New(cacheDir, cfg.Enrich.CacheTTL, client)
+			finds, err := en.Enrich(ctx, comps)
+			if err != nil {
+				fmt.Fprintf(warn, "guardian: warning: %v; proceeding with catalog findings\n", err)
+			}
+			out = append(out, finds...)
+		default:
+			fmt.Fprintf(warn, "guardian: warning: unknown enrichment source %q; skipping\n", src)
+		}
+	}
+	return out
 }
 
 // renderScanOutcome writes the scan result to w in JSON or human form.

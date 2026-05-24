@@ -40,7 +40,7 @@ func TestParseNDJSON(t *testing.T) {
 				CatalogID: "MAL-1", Severity: model.SeverityCritical, Ecosystem: "npm",
 				Name: "evil", Version: "6.6.6", SourceFile: "/p/lock.json",
 				EvidenceType: "exact name+version match (version=6.6.6)", Confidence: 1.0,
-				Class: "",
+				Class: "", Source: model.SourceCatalog,
 			}},
 		},
 		{
@@ -109,6 +109,7 @@ func TestParseNDJSONGoldenFile(t *testing.T) {
 			CatalogID: "MAL-2026-104", Severity: model.SeverityCritical, Ecosystem: "npm",
 			Name: "evil-dep", Version: "6.6.6", SourceFile: "/proj/package-lock.json",
 			EvidenceType: "exact name+version match (version=6.6.6)", Confidence: 1.0, Class: "",
+			Source: model.SourceCatalog,
 		},
 	}
 	if !equalFindings(finds, wantFinds) {

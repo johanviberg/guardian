@@ -181,6 +181,43 @@ in `warn` mode it logs a warning and proceeds. The default upstream feed is unsi
 [`docs/CATALOG_FORMAT.md`](docs/CATALOG_FORMAT.md#signature-verification-optional) for
 signing steps.
 
+## Enrichment
+
+guardian can optionally enrich a scan with known-vulnerability data from the public
+[OSV.dev](https://osv.dev) database. **Enrichment is opt-in and off by default.**
+
+Enable it per-run with `--enrich`:
+
+```sh
+guardian scan deep --enrich
+```
+
+or persistently in `guardian.yaml`:
+
+```yaml
+enrich:
+  enabled: true          # default false
+  sources: [osv]         # default [osv]
+  fail_on: ""            # "" = informational (default); or a severity to gate on
+  cache_ttl: 24h         # how long advisory details are cached locally
+```
+
+Environment overrides: `GUARDIAN_ENRICH_ENABLED=true`, `GUARDIAN_ENRICH_FAIL_ON=high`.
+
+**What it queries.** For each *supported* component (npm, PyPI, Go, RubyGems, Packagist)
+that has a concrete version, guardian sends `{ecosystem, name, version}` to `api.osv.dev`
+(batched), then fetches advisory details for matches. Unsupported ecosystems (editor/IDE and
+browser extensions, MCP, etc.) and version-less components are skipped. No API key is needed.
+Advisory details are cached locally so repeat scans don't re-fetch, and enrichment is
+fail-open: an offline or rate-limited OSV is a warning, not a scan failure.
+
+**Gating.** OSV findings are classified `vulnerable` (never `confirmed-malicious`) and are
+**informational by default** — they appear in output and the JSON `findings[]` but do **not**
+change the exit code. Set `enrich.fail_on` to a severity to make OSV findings at or above
+that severity escalate the exit code to `1`. Catalog gating (exit `2` for confirmed-malicious,
+`1` for catalog-vulnerable) is unchanged. See [SECURITY.md](SECURITY.md#enrichment-optional-off-by-default)
+for the enrichment threat model.
+
 ## Architecture
 
 ```

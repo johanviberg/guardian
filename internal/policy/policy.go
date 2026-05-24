@@ -22,6 +22,12 @@ import "github.com/johanviberg/guardian/internal/model"
 // Classify never inspects or mutates Suppressed; suppression is an orthogonal
 // concern applied by ApplySuppressions.
 func Classify(f model.Finding) model.Class {
+	// Enrichment (OSV) findings describe known vulnerabilities, not malicious
+	// publishes: they are ClassVulnerable regardless of severity, and never
+	// confirmed-malicious. A concrete OSV/CVE id is always present.
+	if f.Source == model.SourceOSV || f.EvidenceType == "osv" {
+		return model.ClassVulnerable
+	}
 	if f.CatalogID == "" {
 		return model.ClassInformational
 	}
@@ -135,9 +141,70 @@ func ApplySuppressions(findings []model.Finding, s Suppressor) []model.Finding {
 // Finding.Class, so callers should run ClassifyAll first; as a safety net a
 // finding with an empty Class is classified on the fly.
 func ExitCode(findings []model.Finding) int {
+	return ExitCodeWithGate(findings, Gate{})
+}
+
+// Gate configures how enrichment (non-catalog) findings affect the exit code.
+//
+// The zero value never gates on enrichment: OSV findings stay informational and
+// do not escalate the process exit code. Set EnrichFailOn to a severity to make
+// enrichment findings at or above that severity escalate to exit code 1.
+type Gate struct {
+	// EnrichFailOn is the minimum severity at which an enrichment finding
+	// (Source=="osv") escalates the exit code to 1. The zero value ("") never
+	// escalates on enrichment.
+	EnrichFailOn model.Severity
+}
+
+// isEnrichment reports whether a finding came from enrichment rather than the
+// catalog. An empty Source is treated as catalog.
+func isEnrichment(f model.Finding) bool {
+	return f.Source == model.SourceOSV || f.EvidenceType == "osv"
+}
+
+// severityRank orders severities from least to most urgent for threshold
+// comparison: info(0) < low(1) < medium(2) < high(3) < critical(4). An
+// unrecognized severity ranks below info (-1) so it never meets a threshold.
+func severityRank(s model.Severity) int {
+	switch s {
+	case model.SeverityInfo:
+		return 0
+	case model.SeverityLow:
+		return 1
+	case model.SeverityMedium:
+		return 2
+	case model.SeverityHigh:
+		return 3
+	case model.SeverityCritical:
+		return 4
+	}
+	return -1
+}
+
+// ExitCodeWithGate computes the process exit code, applying gate g to enrichment
+// findings. Precedence (highest wins):
+//
+//	2 - at least one non-suppressed confirmed-malicious CATALOG finding.
+//	1 - at least one non-suppressed CATALOG finding (none confirmed-malicious),
+//	    OR at least one non-suppressed ENRICHMENT finding whose severity is >=
+//	    g.EnrichFailOn (only when g.EnrichFailOn is set).
+//	0 - otherwise.
+//
+// Enrichment findings are informational by default: with a zero Gate they never
+// escalate the exit code. Suppressed findings never escalate. Classification is
+// read from Finding.Class, falling back to Classify for an empty Class.
+func ExitCodeWithGate(findings []model.Finding, g Gate) int {
 	code := 0
 	for _, f := range findings {
 		if f.Suppressed {
+			continue
+		}
+		if isEnrichment(f) {
+			// Informational by default; only escalates when a threshold is set
+			// and met.
+			if g.EnrichFailOn != "" && severityRank(f.Severity) >= severityRank(g.EnrichFailOn) {
+				code = 1
+			}
 			continue
 		}
 		class := f.Class

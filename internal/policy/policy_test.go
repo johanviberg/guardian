@@ -272,3 +272,119 @@ func TestSummarizeFallbackClassify(t *testing.T) {
 		t.Errorf("fallback classify failed: ByClass = %v", s.ByClass)
 	}
 }
+
+func TestClassifyOSV(t *testing.T) {
+	// An OSV finding is always vulnerable, never confirmed-malicious, even at
+	// critical severity.
+	osvCritical := model.Finding{
+		CatalogID: "CVE-2026-1", Severity: model.SeverityCritical, Source: model.SourceOSV,
+	}
+	if got := Classify(osvCritical); got != model.ClassVulnerable {
+		t.Errorf("Classify(osv critical) = %q, want vulnerable", got)
+	}
+	// Detected via EvidenceType too.
+	osvByEvidence := model.Finding{CatalogID: "CVE-2026-2", Severity: model.SeverityCritical, EvidenceType: "osv"}
+	if got := Classify(osvByEvidence); got != model.ClassVulnerable {
+		t.Errorf("Classify(osv by evidence) = %q, want vulnerable", got)
+	}
+}
+
+func mkFinding(source model.Source, sev model.Severity, suppressed bool) model.Finding {
+	f := model.Finding{
+		CatalogID: "ID", Severity: sev, Ecosystem: "npm", Name: "p", Version: "1", Source: source, Suppressed: suppressed,
+	}
+	if source == model.SourceOSV {
+		f.EvidenceType = "osv"
+	}
+	f.Class = Classify(f)
+	return f
+}
+
+func TestExitCodeWithGate(t *testing.T) {
+	tests := []struct {
+		name     string
+		findings []model.Finding
+		gate     Gate
+		want     int
+	}{
+		{
+			name:     "catalog confirmed-malicious -> 2",
+			findings: []model.Finding{mkFinding(model.SourceCatalog, model.SeverityCritical, false)},
+			want:     2,
+		},
+		{
+			name:     "catalog vulnerable -> 1",
+			findings: []model.Finding{mkFinding(model.SourceCatalog, model.SeverityHigh, false)},
+			want:     1,
+		},
+		{
+			name:     "osv informational by default -> 0",
+			findings: []model.Finding{mkFinding(model.SourceOSV, model.SeverityCritical, false)},
+			want:     0,
+		},
+		{
+			name:     "osv promoted via FailOn at/above threshold -> 1",
+			findings: []model.Finding{mkFinding(model.SourceOSV, model.SeverityHigh, false)},
+			gate:     Gate{EnrichFailOn: model.SeverityHigh},
+			want:     1,
+		},
+		{
+			name:     "osv below FailOn threshold -> 0",
+			findings: []model.Finding{mkFinding(model.SourceOSV, model.SeverityMedium, false)},
+			gate:     Gate{EnrichFailOn: model.SeverityHigh},
+			want:     0,
+		},
+		{
+			name:     "osv critical with FailOn high -> 1",
+			findings: []model.Finding{mkFinding(model.SourceOSV, model.SeverityCritical, false)},
+			gate:     Gate{EnrichFailOn: model.SeverityHigh},
+			want:     1,
+		},
+		{
+			name:     "suppressed catalog malicious never escalates -> 0",
+			findings: []model.Finding{mkFinding(model.SourceCatalog, model.SeverityCritical, true)},
+			want:     0,
+		},
+		{
+			name:     "suppressed osv with FailOn never escalates -> 0",
+			findings: []model.Finding{mkFinding(model.SourceOSV, model.SeverityCritical, true)},
+			gate:     Gate{EnrichFailOn: model.SeverityLow},
+			want:     0,
+		},
+		{
+			name: "catalog malicious beats osv-gated vuln -> 2",
+			findings: []model.Finding{
+				mkFinding(model.SourceOSV, model.SeverityCritical, false),
+				mkFinding(model.SourceCatalog, model.SeverityCritical, false),
+			},
+			gate: Gate{EnrichFailOn: model.SeverityLow},
+			want: 2,
+		},
+		{
+			name: "catalog vuln + osv informational -> 1",
+			findings: []model.Finding{
+				mkFinding(model.SourceCatalog, model.SeverityMedium, false),
+				mkFinding(model.SourceOSV, model.SeverityCritical, false),
+			},
+			want: 1,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ExitCodeWithGate(tc.findings, tc.gate); got != tc.want {
+				t.Errorf("ExitCodeWithGate() = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestExitCodeZeroGateMatchesExitCode(t *testing.T) {
+	// ExitCode must equal ExitCodeWithGate with a zero Gate.
+	findings := []model.Finding{
+		mkFinding(model.SourceCatalog, model.SeverityHigh, false),
+		mkFinding(model.SourceOSV, model.SeverityCritical, false),
+	}
+	if a, b := ExitCode(findings), ExitCodeWithGate(findings, Gate{}); a != b {
+		t.Errorf("ExitCode=%d != ExitCodeWithGate(zero)=%d", a, b)
+	}
+}

@@ -17,6 +17,19 @@ const (
 	SeverityInfo     Severity = "info"
 )
 
+// Source identifies which subsystem produced a finding.
+type Source string
+
+const (
+	// SourceCatalog is a finding produced by matching the exposure catalog
+	// (the default for findings emitted by the scanner).
+	SourceCatalog Source = "catalog"
+	// SourceOSV is a finding produced by OSV vulnerability enrichment
+	// (internal/enrich/osv). OSV findings are informational by default and are
+	// never classified as confirmed-malicious.
+	SourceOSV Source = "osv"
+)
+
 // Class is guardian's policy classification of a finding (see internal/policy).
 type Class string
 
@@ -58,9 +71,15 @@ type Finding struct {
 	Name         string   `json:"name"`          //
 	Version      string   `json:"version"`       //
 	SourceFile   string   `json:"source_file"`   // where the matched component lives
-	EvidenceType string   `json:"evidence_type"` // e.g. "exact-version-match"
+	EvidenceType string   `json:"evidence_type"` // e.g. "exact-version-match", "osv"
 	Confidence   float64  `json:"confidence"`    //
 	Suppressed   bool     `json:"suppressed"`    // matched an active suppression
+	// Source identifies the producing subsystem: "catalog" (default) or "osv".
+	// An empty Source is treated as "catalog" by readers.
+	Source Source `json:"source"`
+	// Summary is a short human-readable description of the finding, populated by
+	// enrichment (e.g. the OSV advisory summary). Empty for catalog findings.
+	Summary string `json:"summary,omitempty"`
 }
 
 // Key uniquely identifies a finding for diffing across runs.

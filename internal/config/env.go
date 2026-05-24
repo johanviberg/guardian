@@ -21,6 +21,8 @@ const (
 	EnvNotifyMinSeverity      = "GUARDIAN_NOTIFY_MIN_SEVERITY"      //
 	EnvNotifyQuietHoursStart  = "GUARDIAN_NOTIFY_QUIET_HOURS_START" // HH:MM
 	EnvNotifyQuietHoursEnd    = "GUARDIAN_NOTIFY_QUIET_HOURS_END"   // HH:MM
+	EnvEnrichEnabled          = "GUARDIAN_ENRICH_ENABLED"           // bool: 1/true/yes
+	EnvEnrichFailOn           = "GUARDIAN_ENRICH_FAIL_ON"           // severity or ""
 	EnvRetentionComponentDays = "GUARDIAN_RETENTION_COMPONENT_DAYS"
 	EnvDBPath                 = "GUARDIAN_DB_PATH"
 	EnvStateDir               = "GUARDIAN_STATE_DIR"
@@ -79,6 +81,16 @@ func overlayEnv(cfg *Config, environ []string) error {
 	if v, ok := env[EnvNotifyQuietHoursEnd]; ok {
 		cfg.Notify.QuietHours.End = v
 	}
+	if v, ok := env[EnvEnrichEnabled]; ok {
+		b, err := parseBool(v)
+		if err != nil {
+			return fmt.Errorf("config: %s: %w", EnvEnrichEnabled, err)
+		}
+		cfg.Enrich.Enabled = b
+	}
+	if v, ok := env[EnvEnrichFailOn]; ok {
+		cfg.Enrich.FailOn = v
+	}
 	if v, ok := env[EnvRetentionComponentDays]; ok {
 		n, err := strconv.Atoi(v)
 		if err != nil {
@@ -112,6 +124,17 @@ func overlayEnv(cfg *Config, environ []string) error {
 		cfg.Schedule[profile] = n
 	}
 	return nil
+}
+
+// parseBool accepts a permissive set of truthy/falsy strings for env flags.
+func parseBool(s string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "1", "t", "true", "yes", "y", "on":
+		return true, nil
+	case "0", "f", "false", "no", "n", "off", "":
+		return false, nil
+	}
+	return false, fmt.Errorf("invalid boolean %q", s)
 }
 
 func splitCSV(s string) []string {

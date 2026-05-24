@@ -21,6 +21,7 @@ type fileConfig struct {
 	Schedule  map[string]int `yaml:"schedule"`
 	Catalog   *fileCatalog   `yaml:"catalog"`
 	Notify    *fileNotify    `yaml:"notify"`
+	Enrich    *fileEnrich    `yaml:"enrich"`
 	Retention *fileRetention `yaml:"retention"`
 	DBPath    *string        `yaml:"db_path"`
 	StateDir  *string        `yaml:"state_dir"`
@@ -55,6 +56,13 @@ type fileNotify struct {
 type fileQuietHours struct {
 	Start *string `yaml:"start"`
 	End   *string `yaml:"end"`
+}
+
+type fileEnrich struct {
+	Enabled  *bool    `yaml:"enabled"`
+	Sources  []string `yaml:"sources"`
+	FailOn   *string  `yaml:"fail_on"`
+	CacheTTL *string  `yaml:"cache_ttl"` // parsed as a Go duration string
 }
 
 type fileRetention struct {
@@ -135,6 +143,24 @@ func applyYAML(cfg *Config, data []byte) error {
 			if qh.End != nil {
 				cfg.Notify.QuietHours.End = *qh.End
 			}
+		}
+	}
+	if e := fc.Enrich; e != nil {
+		if e.Enabled != nil {
+			cfg.Enrich.Enabled = *e.Enabled
+		}
+		if e.Sources != nil {
+			cfg.Enrich.Sources = append([]string(nil), e.Sources...)
+		}
+		if e.FailOn != nil {
+			cfg.Enrich.FailOn = *e.FailOn
+		}
+		if e.CacheTTL != nil {
+			d, err := time.ParseDuration(*e.CacheTTL)
+			if err != nil {
+				return fmt.Errorf("enrich.cache_ttl: %w", err)
+			}
+			cfg.Enrich.CacheTTL = d
 		}
 	}
 	if r := fc.Retention; r != nil {

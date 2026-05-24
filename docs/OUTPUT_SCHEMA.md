@@ -39,13 +39,43 @@ Findings appear in several payloads and share this shape:
   "source_file": "/path/package-lock.json",
   "evidence_type": "exact-version-match",
   "confidence": 1,
-  "suppressed": false
+  "suppressed": false,
+  "source": "catalog"
 }
 ```
 
 `class` is guardian's policy classification: `confirmed-malicious`, `vulnerable`, or
 `informational`. `severity` is the catalog-supplied label. `suppressed` is `true` when an
 active suppression matched (such findings do not escalate the exit code).
+
+`source` identifies the producing subsystem: `catalog` (the default — exposure-catalog
+matches) or `osv` (optional OSV vulnerability enrichment). An absent or empty `source` is
+treated as `catalog` by consumers.
+
+`summary` (optional, omitted when empty) is a short human-readable description, populated by
+enrichment with the advisory summary.
+
+OSV enrichment findings always have `class: vulnerable` and `source: osv` (with
+`evidence_type: osv`) — they are never `confirmed-malicious`, and they are informational:
+they do not escalate the exit code unless `enrich.fail_on` is configured. A representative
+enrichment finding:
+
+```json
+{
+  "catalog_id": "CVE-2021-23337",
+  "severity": "high",
+  "class": "vulnerable",
+  "ecosystem": "npm",
+  "name": "lodash",
+  "version": "4.17.15",
+  "source_file": "/proj/package-lock.json",
+  "evidence_type": "osv",
+  "confidence": 1,
+  "suppressed": false,
+  "source": "osv",
+  "summary": "Command injection in lodash"
+}
+```
 
 ## `data` per command
 

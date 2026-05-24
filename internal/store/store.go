@@ -53,7 +53,7 @@ func (s *Store) Close() error {
 
 // schemaVersion is the current schema version. Bump it and append a migration
 // step in migrate when the schema changes.
-const schemaVersion = 1
+const schemaVersion = 2
 
 // migrate applies migrations idempotently using SQLite's user_version pragma as
 // the migration marker. Each step is wrapped in its own transaction.
@@ -67,6 +67,7 @@ func (s *Store) migrate(ctx context.Context) error {
 	// to version i+1.
 	steps := []string{
 		migration1,
+		migration2,
 	}
 
 	for v := current; v < len(steps); v++ {
@@ -157,6 +158,15 @@ CREATE TABLE IF NOT EXISTS suppressions (
     expires_at    TEXT,
     created_at    TEXT NOT NULL
 );
+`
+
+// migration2 adds v2 enrichment columns to the findings table:
+//   - source:  the producing subsystem ("catalog" default, "osv"). Rows written
+//     before this column existed default to "catalog".
+//   - summary: a short human-readable description (OSV advisory summary).
+const migration2 = `
+ALTER TABLE findings ADD COLUMN source  TEXT NOT NULL DEFAULT 'catalog';
+ALTER TABLE findings ADD COLUMN summary TEXT NOT NULL DEFAULT '';
 `
 
 // timeFormat is the canonical on-disk timestamp format: RFC3339 with

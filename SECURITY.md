@@ -68,6 +68,31 @@ manifests, exposure catalogs) on a developer's machine. Its design constraints:
   at the trusted public key (a file path or an inline key) and set `catalog.verify: require`
   when sourcing from a self-signed feed. Still pin your catalog source to a trusted location.
 
+### Enrichment (optional, off by default)
+
+guardian can optionally enrich a scan with known-vulnerability data from the public
+[OSV.dev](https://osv.dev) database. **Enrichment is opt-in and off by default.**
+
+- **What is sent.** When enabled, guardian sends the `{ecosystem, package name, version}`
+  of *supported* components (npm, PyPI, Go, RubyGems, Packagist) to `api.osv.dev` via the
+  batched `querybatch` endpoint, then fetches advisory details for any matches. Components in
+  ecosystems OSV does not cover (vscode, cursor, windsurf, browser/editor extensions, MCP, …)
+  and components without a concrete version are **not sent**. No file paths, hostnames, or
+  other inventory metadata leave the machine.
+- **No credentials.** OSV requires no API key; guardian sends only a descriptive
+  `User-Agent`.
+- **Local cache.** Advisory details are cached locally as JSON (under the catalog cache dir,
+  `enrich/osv/`) with a freshness TTL, so repeat scans do not re-fetch. Failures are never
+  cached as "no vulns".
+- **Fail-open.** Enrichment never fails a scan: if the network is unavailable, rate-limited,
+  or times out, guardian warns on stderr and proceeds with catalog-only findings.
+- **Informational by default.** OSV findings are classified `vulnerable` (never
+  `confirmed-malicious`) and are **informational** — they do **not** change the exit code
+  unless you set `enrich.fail_on` to a severity threshold, in which case OSV findings at or
+  above that severity escalate the exit code to `1`.
+- **How to enable.** Set `enrich.enabled: true` in `guardian.yaml`, export
+  `GUARDIAN_ENRICH_ENABLED=true`, or pass `--enrich` to `guardian scan`.
+
 ## Supply-chain hardening of this project
 
 Because guardian is itself a supply-chain tool, the project applies the practices it

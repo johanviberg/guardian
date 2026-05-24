@@ -130,6 +130,7 @@ func parseNDJSON(data []byte) (components []model.Component, findings []model.Fi
 				SourceFile:   rec.SourceFile,
 				EvidenceType: rec.Evidence,
 				Confidence:   confidenceToFloat(rec.Confidence),
+				Source:       model.SourceCatalog,
 				// Class is intentionally left empty: internal/policy sets it.
 			})
 		default:
