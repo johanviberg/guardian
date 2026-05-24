@@ -176,6 +176,48 @@ hack/sync-upstream.sh <tag-or-sha>
 
 This also refreshes the embedded baseline catalogs.
 
+## Releases
+
+Releases are cut by pushing a semver tag; everything else is automated and signed.
+
+```sh
+git tag v1.2.3
+git push origin v1.2.3
+```
+
+The [`release` workflow](.github/workflows/release.yml) then runs GoReleaser
+([`.goreleaser.yaml`](.goreleaser.yaml)) to:
+
+- build reproducible, pure-Go (`CGO_ENABLED=0`) binaries for darwin/linux/windows
+  on amd64/arm64 (build timestamps pinned to the commit),
+- produce per-archive **SBOMs** (syft) and a sha256 `checksums.txt`,
+- **cosign keyless-sign** the checksums file (Sigstore OIDC — no long-lived keys),
+- emit a first-party **SLSA build-provenance attestation** for each binary,
+- publish all of the above to the GitHub Release.
+
+### Verifying a download
+
+Verify the cosign keyless signature over the checksums file (which covers every
+artifact by sha256):
+
+```sh
+cosign verify-blob \
+  --certificate checksums.txt.pem \
+  --signature checksums.txt.sig \
+  --certificate-identity-regexp 'https://github.com/johanviberg/guardian/\.github/workflows/release\.yml@.*' \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+  checksums.txt
+
+# Then confirm your downloaded artifact is listed in the verified checksums:
+sha256sum --check --ignore-missing checksums.txt
+```
+
+Verify the SLSA build provenance of the binary against this repo:
+
+```sh
+gh attestation verify ./guardian --repo johanviberg/guardian
+```
+
 ## License
 
 guardian is distributed under the Apache License 2.0. The vendored Bumblebee source

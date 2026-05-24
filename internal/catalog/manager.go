@@ -11,22 +11,25 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
 
-// DefaultSourceURL is the GitHub Contents API listing for the Bumblebee
-// threat_intel directory.
+// DefaultSourceURL is the GitHub Contents API listing for the upstream
+// Bumblebee threat_intel directory.
 //
-// NOTE: The real upstream layout is a DIRECTORY of per-advisory .json files
-// (e.g. mini-shai-hulud.json, gemstuffer.json) — there is no single
-// catalog.json. Remote sync therefore must enumerate this listing, download
-// each .json, validate, and merge. Full remote multi-file sync is marked TODO
-// below; the URL is correct but the fetch path is intentionally limited to a
-// single-file fetch today (see TODO in fetch()).
+// The API returns a JSON array of file objects; guardian filters for entries
+// with type "file" and a name ending in ".json", then fetches each
+// download_url individually. See fetchDir for the full protocol.
 //
-// Confirm: https://github.com/perplexityai/bumblebee/tree/main/threat_intel
+// Verify the path against the live repo:
+// https://github.com/perplexityai/bumblebee/tree/main/threat_intel
 const DefaultSourceURL = "https://api.github.com/repos/perplexityai/bumblebee/contents/threat_intel?ref=main"
+
+// userAgent is sent on every HTTP request. GitHub's API requires a non-empty
+// User-Agent; we identify the client clearly.
+const userAgent = "guardian/1 catalog-sync (github.com/johanviberg/guardian)"
 
 // DefaultTTL is the freshness window before a cached catalog is considered
 // stale and Ensure attempts a refetch.
@@ -37,53 +40,52 @@ const (
 	metaFileName    = "catalog.meta.json"
 )
 
-// ErrStale is wrapped into the error returned by Ensure when a fresh fetch
-// could not be performed (offline / fetch failure) but a usable cached catalog
-// exists. Callers can test for it with errors.Is and decide whether to proceed.
+// ErrStale is returned (wrapped) by Ensure when a fresh fetch could not be
+// performed but a usable cached or vendored catalog exists. Callers test with
+// errors.Is and decide whether to proceed.
 var ErrStale = errors.New("catalog: cached copy is stale")
 
-// ErrNoCatalog is returned when no usable catalog is available at all:
-// fetching failed or was skipped and neither a cache nor a vendored fallback
-// exists.
+// ErrNoCatalog is returned when no usable catalog is available at all.
 var ErrNoCatalog = errors.New("catalog: no catalog available")
 
 // Config configures a Manager.
 type Config struct {
-	// CacheDir is the directory holding the cached merged catalog and its
-	// metadata sidecar. It is created on demand.
+	// CacheDir is the directory holding cached catalog files and the metadata
+	// sidecar. It is created on demand with mode 0750.
 	CacheDir string
 
-	// SourceURL is the HTTPS URL to fetch the catalog from. Defaults to
-	// DefaultSourceURL when empty. Override for testing or custom catalogs.
+	// SourceURL is the HTTPS URL to fetch catalogs from. Defaults to
+	// DefaultSourceURL when empty.
+	//
+	// Mode is determined by the URL suffix:
+	//   - ends in ".json" → single-file mode: GET the URL, expect one catalog.
+	//   - anything else   → directory-listing mode: expect a GitHub Contents API
+	//     JSON array; each file entry is downloaded individually and merged.
 	SourceURL string
 
 	// TTL is the freshness window. Defaults to DefaultTTL when zero.
 	TTL time.Duration
 
-	// Offline, when true, skips all network fetches; Ensure relies on the
-	// cached copy then the vendored fallback. NoFetch is an alias kept for
-	// caller ergonomics (both flags take effect if either is set).
+	// Offline / NoFetch skip all network fetches (either flag is sufficient).
+	// Ensure then relies on the cached copy then the vendored fallback.
 	Offline bool
 	NoFetch bool
 
-	// DefaultCatalogDir is the path to a directory of bundled/vendored
-	// catalog files used as a last-resort fallback when no cache exists and
-	// fetching is impossible (offline mode or network failure). It is NOT
-	// fetched from — it is read directly from disk.
+	// DefaultCatalogDir is the path to a directory of vendored/bundled catalog
+	// files used as a last-resort fallback when no cache exists and fetching is
+	// impossible. It is read directly from disk — never fetched from.
 	//
-	// Set this to the vendored threat_intel/ directory so guardian works
-	// offline out-of-the-box:
+	// Point this at the vendored threat_intel/ directory so guardian works
+	// fully offline out-of-the-box:
 	//
-	//   DefaultCatalogDir: "internal/bumblebee/threat_intel"
-	//
-	// When empty, no vendored fallback is used.
+	//	DefaultCatalogDir: "internal/bumblebee/threat_intel"
 	DefaultCatalogDir string
 
-	// HTTPClient is used for fetches. Defaults to a client with a sane
-	// timeout.
+	// HTTPClient is used for all outbound requests. Defaults to a client with
+	// a 30-second timeout.
 	HTTPClient *http.Client
 
-	// now allows tests to control time; nil means time.Now.
+	// now is injectable for deterministic tests. Nil means time.Now.
 	now func() time.Time
 }
 
@@ -92,7 +94,7 @@ type Manager struct {
 	cfg Config
 }
 
-// Meta is the provenance sidecar recorded alongside a cached catalog.
+// Meta is the provenance sidecar written alongside every cached catalog.
 type Meta struct {
 	Version    string    `json:"version"`
 	FetchedAt  time.Time `json:"fetched_at"`
@@ -101,7 +103,14 @@ type Meta struct {
 	SourceURL  string    `json:"source_url"`
 }
 
-// NewManager builds a Manager, applying defaults to the supplied config.
+// ghFile is one element in a GitHub Contents API listing response.
+type ghFile struct {
+	Name        string `json:"name"`
+	Type        string `json:"type"` // "file" | "dir" | "symlink" | "submodule"
+	DownloadURL string `json:"download_url"`
+}
+
+// NewManager builds a Manager, filling in defaults.
 func NewManager(cfg Config) (*Manager, error) {
 	if cfg.CacheDir == "" {
 		return nil, errors.New("catalog: CacheDir is required")
@@ -126,22 +135,26 @@ func (m *Manager) offline() bool { return m.cfg.Offline || m.cfg.NoFetch }
 func (m *Manager) catalogPath() string { return filepath.Join(m.cfg.CacheDir, catalogFileName) }
 func (m *Manager) metaPath() string    { return filepath.Join(m.cfg.CacheDir, metaFileName) }
 
-// Ensure guarantees a usable catalog path and returns it together with the
-// catalog's version string.
+// isSingleFileURL reports whether SourceURL refers to a single catalog file
+// (ends in ".json") rather than a directory listing endpoint.
+func isSingleFileURL(rawURL string) bool {
+	// Strip any query string before checking the suffix.
+	path := rawURL
+	if i := strings.IndexByte(rawURL, '?'); i >= 0 {
+		path = rawURL[:i]
+	}
+	return strings.HasSuffix(strings.ToLower(path), ".json")
+}
+
+// Ensure guarantees a usable catalog and returns its local path and version.
 //
 // Resolution order:
-//  1. Cached catalog present + fresh (within TTL) → return immediately, no I/O.
-//  2. Cached missing/stale + fetching permitted → fetch, validate, cache
-//     atomically, return new path.
-//  3. Fetch fails (network error) but cache exists → return cached path +
-//     ErrStale; caller decides whether to proceed.
-//  4. Offline/NoFetch + cache exists but stale → same as (3).
-//  5. No cache + fetch impossible → try DefaultCatalogDir (vendored fallback)
-//     and return its path + ErrStale.
-//  6. No cache, no fetch, no vendored fallback → ErrNoCatalog.
-//
-// The returned path always points at a file the engine's exposure.Load() can
-// read (a valid JSON catalog with schema_version + entries).
+//  1. Cache present and fresh (within TTL) → return immediately; no I/O.
+//  2. Cache missing/stale and fetching permitted → fetch+validate+cache; return.
+//  3. Fetch fails, cache exists → return cached path + ErrStale.
+//  4. Offline, cache exists but stale → return cached path + ErrStale.
+//  5. No cache, fetch impossible → try DefaultCatalogDir; return its path + ErrStale.
+//  6. Nothing usable → ErrNoCatalog.
 func (m *Manager) Ensure(ctx context.Context) (cachedPath string, version string, err error) {
 	_, cachedMeta, haveCache := m.loadCache()
 
@@ -150,15 +163,15 @@ func (m *Manager) Ensure(ctx context.Context) (cachedPath string, version string
 		return m.catalogPath(), cachedMeta.Version, nil
 	}
 
-	// (2) Attempt fetch.
+	// (2) Attempt remote fetch.
 	if !m.offline() {
 		meta, fetchErr := m.fetch(ctx)
 		if fetchErr == nil {
 			return m.catalogPath(), meta.Version, nil
 		}
-		// Fetch failed.
+		// Fetch failed — degrade gracefully.
 		if haveCache {
-			// (3) Stale cache usable.
+			// (3) Stale cache.
 			return m.catalogPath(), cachedMeta.Version,
 				fmt.Errorf("%w: fetch failed (%v), using cached copy", ErrStale, fetchErr)
 		}
@@ -171,14 +184,13 @@ func (m *Manager) Ensure(ctx context.Context) (cachedPath string, version string
 
 	// Offline path.
 	if haveCache {
-		// (4) Stale cache, offline.
-		msg := fmt.Sprintf("offline, last fetched %s", cachedMeta.FetchedAt.Format(time.RFC3339))
 		if !m.isStale(cachedMeta) {
-			// still fresh even though we're offline — no error needed
+			// Fresh cache even though offline — no error.
 			return m.catalogPath(), cachedMeta.Version, nil
 		}
+		// (4) Stale cache, offline.
 		return m.catalogPath(), cachedMeta.Version,
-			fmt.Errorf("%w: %s", ErrStale, msg)
+			fmt.Errorf("%w: offline, last fetched %s", ErrStale, cachedMeta.FetchedAt.Format(time.RFC3339))
 	}
 
 	// (5) No cache, offline — try vendored fallback.
@@ -186,14 +198,13 @@ func (m *Manager) Ensure(ctx context.Context) (cachedPath string, version string
 		return p, v, fmt.Errorf("%w: offline and no cached catalog, using vendored catalog", ErrStale)
 	}
 
-	// (6) No catalog available.
+	// (6) Nothing usable.
 	return "", "", fmt.Errorf("%w: offline and no cached catalog", ErrNoCatalog)
 }
 
-// vendoredFallback loads the DefaultCatalogDir as a merged catalog and returns
-// its directory path and a derived version. It does NOT copy to CacheDir — the
-// caller should pass the returned path straight to the engine.
-func (m *Manager) vendoredFallback() (path string, version string, err error) {
+// vendoredFallback loads DefaultCatalogDir and returns its path and a derived
+// version. It does not copy to CacheDir — the engine accepts a directory path.
+func (m *Manager) vendoredFallback() (path, version string, err error) {
 	if m.cfg.DefaultCatalogDir == "" {
 		return "", "", errors.New("no DefaultCatalogDir configured")
 	}
@@ -209,9 +220,8 @@ func (m *Manager) vendoredFallback() (path string, version string, err error) {
 	return m.cfg.DefaultCatalogDir, ver, nil
 }
 
-// Freshness reports the cached catalog's version, fetch time, and whether it
-// is stale. It performs no network access and is intended for
-// `guardian status` / `guardian doctor`.
+// Freshness reports the cached catalog's version, fetch time, and staleness.
+// No network access is performed — intended for `guardian status` / `guardian doctor`.
 func (m *Manager) Freshness(_ context.Context) (version string, fetchedAt time.Time, stale bool, err error) {
 	_, meta, ok := m.loadCache()
 	if !ok {
@@ -244,47 +254,59 @@ func (m *Manager) loadCache() (body []byte, meta Meta, ok bool) {
 	return body, meta, true
 }
 
-// fetch downloads the catalog from SourceURL, validates it, checksums the raw
-// bytes, and atomically writes both the catalog file and its metadata sidecar
-// to CacheDir.
-//
-// TODO(remote-dir-sync): The upstream threat_intel/ is a directory of
-// per-advisory .json files, not a single file. Full remote sync should:
-//  1. GET DefaultSourceURL (GitHub Contents API) → JSON array of {name, download_url}.
-//  2. Filter entries where name ends in ".json".
-//  3. Download each file, validate, accumulate entries.
-//  4. Write the merged catalog atomically to CacheDir/catalog.json.
-//
-// Until that is implemented, SourceURL must point at a single raw JSON catalog
-// (e.g. a custom mirror or a direct raw.githubusercontent.com URL for one
-// file). Using DefaultSourceURL as-is will return a GitHub API JSON array
-// (not a catalog), which Parse will accept as an empty catalog — Ensure will
-// return ErrNoCatalog (no entries) rather than silently caching garbage,
-// because fetch() rejects catalogs with zero entries after a remote fetch.
-// Override SourceURL in Config to point at a single raw file for now.
+// fetch dispatches to fetchSingle or fetchDir based on the SourceURL shape.
 func (m *Manager) fetch(ctx context.Context) (Meta, error) {
 	if !strings.HasPrefix(strings.ToLower(m.cfg.SourceURL), "https://") {
 		return Meta{}, fmt.Errorf("source URL must be HTTPS: %q", m.cfg.SourceURL)
 	}
+	if isSingleFileURL(m.cfg.SourceURL) {
+		return m.fetchSingle(ctx, m.cfg.SourceURL)
+	}
+	return m.fetchDir(ctx)
+}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, m.cfg.SourceURL, nil)
+// httpGet performs a GET request with the guardian User-Agent and returns the
+// raw body. Non-2xx responses are surfaced as descriptive errors; a 403 with
+// X-RateLimit-Remaining: 0 is called out explicitly.
+func (m *Manager) httpGet(ctx context.Context, url string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return Meta{}, fmt.Errorf("build request: %w", err)
+		return nil, fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", userAgent)
 
 	resp, err := m.cfg.HTTPClient.Do(req)
 	if err != nil {
-		return Meta{}, fmt.Errorf("http get: %w", err)
+		return nil, fmt.Errorf("http get %s: %w", url, err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() // #nosec G307 -- read-only response body; close error is ignorable here
+
 	if resp.StatusCode != http.StatusOK {
-		return Meta{}, fmt.Errorf("unexpected status %s", resp.Status)
+		// Surface a helpful message for the GitHub API rate-limit case (HTTP 403
+		// or 429 with X-RateLimit-Remaining: 0).
+		remaining := resp.Header.Get("X-RateLimit-Remaining")
+		if (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests) &&
+			remaining == "0" {
+			return nil, fmt.Errorf("GitHub API rate limit exceeded (%s); retry after %s or set GITHUB_TOKEN",
+				resp.Status, resp.Header.Get("X-RateLimit-Reset"))
+		}
+		return nil, fmt.Errorf("unexpected status %s from %s", resp.Status, url)
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return Meta{}, fmt.Errorf("read body: %w", err)
+		return nil, fmt.Errorf("read body from %s: %w", url, err)
+	}
+	return body, nil
+}
+
+// fetchSingle downloads a single raw JSON catalog from rawURL, validates it,
+// and atomically writes it plus the metadata sidecar to CacheDir.
+func (m *Manager) fetchSingle(ctx context.Context, rawURL string) (Meta, error) {
+	body, err := m.httpGet(ctx, rawURL)
+	if err != nil {
+		return Meta{}, err
 	}
 
 	cat, err := Parse(body)
@@ -294,17 +316,13 @@ func (m *Manager) fetch(ctx context.Context) (Meta, error) {
 	if err := cat.Validate(); err != nil {
 		return Meta{}, err
 	}
-	// After a remote fetch we require at least one entry — an empty catalog
-	// from a remote source almost certainly means we fetched the wrong URL
-	// (e.g. the GitHub Contents API listing itself rather than a raw file).
 	if len(cat.Entries) == 0 {
-		return Meta{}, errors.New("catalog: remote response parsed as an empty catalog (zero entries); check SourceURL — it should point at a single raw catalog JSON, not a directory listing")
+		return Meta{}, errors.New("catalog: remote catalog has zero entries (check SourceURL)")
 	}
 
 	sum := sha256.Sum256(body)
 	hexSum := hex.EncodeToString(sum[:])
 	now := m.cfg.now()
-
 	meta := Meta{
 		Version:    deriveVersion(cat, now, hexSum),
 		FetchedAt:  now,
@@ -312,26 +330,141 @@ func (m *Manager) fetch(ctx context.Context) (Meta, error) {
 		EntryCount: len(cat.Entries),
 		SourceURL:  m.cfg.SourceURL,
 	}
-
-	if err := os.MkdirAll(m.cfg.CacheDir, 0o750); err != nil {
-		return Meta{}, fmt.Errorf("create cache dir: %w", err)
-	}
-	if err := writeFileAtomic(m.catalogPath(), body, 0o644); err != nil {
-		return Meta{}, fmt.Errorf("write catalog: %w", err)
-	}
-	mb, err := json.MarshalIndent(meta, "", "  ")
-	if err != nil {
-		return Meta{}, fmt.Errorf("marshal meta: %w", err)
-	}
-	if err := writeFileAtomic(m.metaPath(), mb, 0o644); err != nil {
-		return Meta{}, fmt.Errorf("write meta: %w", err)
+	if err := m.writeCatalogAndMeta(body, meta); err != nil {
+		return Meta{}, err
 	}
 	return meta, nil
 }
 
+// fetchDir fetches the GitHub Contents API listing at SourceURL, downloads
+// each *.json file in the listing, validates them individually, merges their
+// entries into a single catalog, and writes it atomically to CacheDir.
+//
+// The merged catalog's SHA256 is computed as:
+//
+//	sha256( sha256(file1_bytes) || sha256(file2_bytes) || ... )
+//
+// where files are sorted alphabetically by name — the same ordering as
+// LoadDir — so the combined hash is stable and reproducible from the same
+// set of remote files.
+func (m *Manager) fetchDir(ctx context.Context) (Meta, error) {
+	// Step 1: fetch the directory listing.
+	listBody, err := m.httpGet(ctx, m.cfg.SourceURL)
+	if err != nil {
+		return Meta{}, fmt.Errorf("fetch listing: %w", err)
+	}
+
+	var files []ghFile
+	if err := json.Unmarshal(listBody, &files); err != nil {
+		return Meta{}, fmt.Errorf("parse listing: expected GitHub Contents API JSON array: %w", err)
+	}
+
+	// Step 2: filter to *.json files with a non-empty download_url.
+	var toFetch []ghFile
+	for _, f := range files {
+		if f.Type != "file" {
+			continue
+		}
+		if !strings.HasSuffix(strings.ToLower(f.Name), ".json") {
+			continue
+		}
+		if f.DownloadURL == "" {
+			continue
+		}
+		toFetch = append(toFetch, f)
+	}
+	// Sort by name for deterministic hash ordering.
+	sort.Slice(toFetch, func(i, j int) bool { return toFetch[i].Name < toFetch[j].Name })
+
+	if len(toFetch) == 0 {
+		return Meta{}, errors.New("catalog: directory listing contained no .json files (check SourceURL)")
+	}
+
+	// Step 3: download, parse, and validate each file; accumulate entries and
+	// build the combined checksum.
+	var allEntries []Entry
+	var schemaVersion string
+	var firstSource string
+	combinedHasher := sha256.New()
+
+	for _, f := range toFetch {
+		raw, err := m.httpGet(ctx, f.DownloadURL)
+		if err != nil {
+			return Meta{}, fmt.Errorf("download %s: %w", f.Name, err)
+		}
+		cat, err := Parse(raw)
+		if err != nil {
+			return Meta{}, fmt.Errorf("parse %s: %w", f.Name, err)
+		}
+		if err := cat.Validate(); err != nil {
+			return Meta{}, fmt.Errorf("validate %s: %w", f.Name, err)
+		}
+		// Enforce consistent schema_version across files (same rule as LoadDir).
+		switch {
+		case schemaVersion == "":
+			schemaVersion = cat.SchemaVersion
+			firstSource = f.Name
+		case cat.SchemaVersion != "" && cat.SchemaVersion != schemaVersion:
+			return Meta{}, fmt.Errorf("catalog: %s declares schema_version %q which conflicts with %q (from %s)",
+				f.Name, cat.SchemaVersion, schemaVersion, firstSource)
+		}
+		allEntries = append(allEntries, cat.Entries...)
+		// Feed this file's sha256 into the combined hasher.
+		fileSum := sha256.Sum256(raw)
+		combinedHasher.Write(fileSum[:]) // #nosec G104 -- sha256.Write never returns an error
+	}
+
+	if len(allEntries) == 0 {
+		return Meta{}, errors.New("catalog: remote files yielded zero entries after merge")
+	}
+	if schemaVersion == "" {
+		schemaVersion = SchemaVersion
+	}
+
+	// Step 4: build the merged catalog and marshal it for the cache file.
+	merged := &Catalog{SchemaVersion: schemaVersion, Entries: allEntries}
+	mergedBody, err := json.MarshalIndent(merged, "", "  ")
+	if err != nil {
+		return Meta{}, fmt.Errorf("marshal merged catalog: %w", err)
+	}
+
+	hexSum := hex.EncodeToString(combinedHasher.Sum(nil))
+	now := m.cfg.now()
+	meta := Meta{
+		Version:    deriveVersion(merged, now, hexSum),
+		FetchedAt:  now,
+		SHA256:     hexSum,
+		EntryCount: len(allEntries),
+		SourceURL:  m.cfg.SourceURL,
+	}
+	if err := m.writeCatalogAndMeta(mergedBody, meta); err != nil {
+		return Meta{}, err
+	}
+	return meta, nil
+}
+
+// writeCatalogAndMeta atomically writes the merged catalog JSON and its
+// metadata sidecar to CacheDir, creating the directory if necessary.
+func (m *Manager) writeCatalogAndMeta(catalogBody []byte, meta Meta) error {
+	if err := os.MkdirAll(m.cfg.CacheDir, 0o750); err != nil {
+		return fmt.Errorf("create cache dir: %w", err)
+	}
+	if err := writeFileAtomic(m.catalogPath(), catalogBody, 0o640); err != nil {
+		return fmt.Errorf("write catalog: %w", err)
+	}
+	mb, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal meta: %w", err)
+	}
+	if err := writeFileAtomic(m.metaPath(), mb, 0o640); err != nil {
+		return fmt.Errorf("write meta: %w", err)
+	}
+	return nil
+}
+
 // deriveVersion prefers the catalog's own Version field; otherwise it derives
 // a stable version string from the fetch date and the first 12 hex chars of
-// the sha256 checksum.
+// the checksum (combined sha256 for directory mode, raw sha256 for single-file).
 func deriveVersion(cat *Catalog, fetchedAt time.Time, hexSum string) string {
 	if cat.Version != "" {
 		return cat.Version
@@ -343,10 +476,11 @@ func deriveVersion(cat *Catalog, fetchedAt time.Time, hexSum string) string {
 	return fmt.Sprintf("%s-%s", fetchedAt.UTC().Format("20060102"), prefix)
 }
 
-// writeFileAtomic writes data to path via a temp file + rename so readers
-// never observe a partial write.
+// writeFileAtomic writes data to path by writing to a temp file in the same
+// directory then renaming it into place. Readers never observe a partial file.
 func writeFileAtomic(path string, data []byte, perm os.FileMode) (err error) {
 	dir := filepath.Dir(path)
+	// #nosec G306 -- perm is provided by the caller (0o640 for catalog files)
 	tmp, err := os.CreateTemp(dir, ".tmp-"+filepath.Base(path)+"-*")
 	if err != nil {
 		return err

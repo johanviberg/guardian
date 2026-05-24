@@ -47,7 +47,7 @@ func newSuppressCmd() *cobra.Command {
 				CreatedAt:    time.Now(),
 			}
 			if until != "" {
-				dur, perr := time.ParseDuration(until)
+				dur, perr := parseExpiry(until)
 				if perr != nil {
 					return perr
 				}
@@ -82,7 +82,7 @@ func newSuppressCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&reason, "reason", "", "why this finding is suppressed")
-	cmd.Flags().StringVar(&until, "until", "", "expiry duration (e.g. 7d not supported; use 168h)")
+	cmd.Flags().StringVar(&until, "until", "", "expiry duration: Go durations (e.g. 168h, 1h30m) plus day/week units (e.g. 7d, 2w)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit the stable JSON envelope")
 	return cmd
 }
