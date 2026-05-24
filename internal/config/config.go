@@ -23,8 +23,12 @@ import (
 
 // Defaults that are independent of the host environment.
 const (
-	// DefaultCatalogSourceURL is the upstream Bumblebee threat-intel catalog.
-	DefaultCatalogSourceURL = "https://raw.githubusercontent.com/perplexityai/bumblebee/main/threat_intel/catalog.json"
+	// DefaultCatalogSourceURL is the upstream Bumblebee threat-intel feed. It is
+	// the GitHub Contents API listing for the threat_intel/ directory (a set of
+	// per-advisory catalogs that the catalog manager downloads and merges), NOT a
+	// single catalog.json — upstream publishes no such bundle. Keep this in sync
+	// with catalog.DefaultSourceURL.
+	DefaultCatalogSourceURL = "https://api.github.com/repos/perplexityai/bumblebee/contents/threat_intel?ref=main"
 	// DefaultFreshnessTTL is how long a fetched catalog is considered fresh.
 	DefaultFreshnessTTL = 24 * time.Hour
 	// DefaultRetentionComponentDays is the inventory retention window.
