@@ -1,0 +1,132 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Least privilege by default; jobs opt into more only if they need it.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: "1.26.x"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Build + test across all first-class platforms.
+  # ---------------------------------------------------------------------------
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+      - name: Verify module integrity
+        run: go mod verify
+      - name: Build
+        run: go build ./...
+      - name: Test (race detector)
+        run: go test -race ./...
+
+  # ---------------------------------------------------------------------------
+  # Formatting, vet, and static analysis.
+  # ---------------------------------------------------------------------------
+  lint:
+    name: lint & vet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+      - name: gofmt
+        run: |
+          # The vendored bumblebee tree is upstream code; check only our own.
+          unformatted="$(gofmt -l cmd internal/catalog internal/config internal/diff \
+            internal/model internal/notify internal/policy internal/report \
+            internal/scanner internal/service internal/store \
+            | grep -v '^internal/bumblebee/' || true)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt needed on:"; echo "$unformatted"; exit 1
+          fi
+      - name: go vet
+        run: go vet ./...
+      - name: staticcheck
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@latest
+          staticcheck ./cmd/... $(go list ./internal/... | grep -v '/internal/bumblebee/')
+
+  # ---------------------------------------------------------------------------
+  # Security scanning. Tools are installed from source (no third-party Actions)
+  # to keep the CI supply-chain surface minimal.
+  # ---------------------------------------------------------------------------
+  security:
+    name: security scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+
+      - name: govulncheck (Go vulnerability database)
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+      - name: gosec (static security analysis)
+        run: |
+          go install github.com/securego/gosec/v2/cmd/gosec@latest
+          # Exclude the vendored upstream tree from our own SAST gate.
+          gosec -exclude-dir=internal/bumblebee ./...
+
+  # ---------------------------------------------------------------------------
+  # Dogfooding: run guardian against its own source tree. Fails the build only
+  # on a confirmed-malicious finding (exit code 2), which is exactly the gate we
+  # tell users to apply.
+  # ---------------------------------------------------------------------------
+  self-scan:
+    name: guardian self-scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+      - name: Build guardian
+        run: go build -o guardian ./cmd/guardian
+      - name: Scan this repository (offline, embedded catalog)
+        run: |
+          set +e
+          ./guardian scan project --root . --no-fetch --json
+          code=$?
+          echo "guardian exit code: $code"
+          # 0 = clean, 1 = non-critical findings (allowed), 2 = confirmed-malicious (fail).
+          if [ "$code" -ge 2 ]; then
+            echo "::error::guardian found a confirmed-malicious package in this repo"
+            exit 1
+          fi

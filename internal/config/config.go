@@ -157,6 +157,8 @@ func ConfigFilePath() (string, error) {
 // current (default) values. Unknown top-level keys are rejected so typos in
 // guardian.yaml surface as an error rather than being silently ignored.
 func overlayFile(cfg *Config, path string) error {
+	// #nosec G304 -- path is the user-supplied guardian config file location;
+	// reading it for a read-only YAML overlay decode is the function of this API.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("config: read %s: %w", path, err)

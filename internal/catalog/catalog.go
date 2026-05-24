@@ -88,6 +88,8 @@ type rawCatalog struct {
 // LoadFile reads and parses a single catalog JSON file from path. Unknown
 // top-level keys are silently ignored.
 func LoadFile(path string) (*Catalog, error) {
+	// #nosec G304 -- path is a user-supplied catalog location; reading it for a
+	// read-only JSON decode of catalog data is the documented function of this API.
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("catalog: read %s: %w", path, err)

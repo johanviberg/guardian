@@ -125,7 +125,7 @@ func suppressorFromStore(ctx context.Context, st *store.Store) (policy.Suppresso
 
 // openStore opens the SQLite store, creating its parent directory.
 func openStore(cfg *config.Config) (*store.Store, error) {
-	if err := os.MkdirAll(filepath.Dir(cfg.DBPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(cfg.DBPath), 0o750); err != nil {
 		return nil, fmt.Errorf("create state dir: %w", err)
 	}
 	st, err := store.Open(cfg.DBPath)

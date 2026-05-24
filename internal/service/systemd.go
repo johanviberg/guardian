@@ -145,14 +145,14 @@ func (m *systemdManager) Install(c Config) error {
 		return err
 	}
 	dir := systemdUserDir()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("service: create systemd user dir: %w", err)
 	}
 	svc, err := m.renderService(c)
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(m.UnitPath(c), []byte(svc), 0o644); err != nil {
+	if err := os.WriteFile(m.UnitPath(c), []byte(svc), 0o600); err != nil {
 		return fmt.Errorf("service: write .service: %w", err)
 	}
 
@@ -162,7 +162,7 @@ func (m *systemdManager) Install(c Config) error {
 		if err != nil {
 			return err
 		}
-		if err := os.WriteFile(m.timerPath(c), []byte(timer), 0o644); err != nil {
+		if err := os.WriteFile(m.timerPath(c), []byte(timer), 0o600); err != nil {
 			return fmt.Errorf("service: write .timer: %w", err)
 		}
 		unitToEnable = c.Label + ".timer"

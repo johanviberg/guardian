@@ -110,10 +110,10 @@ func (m *launchdManager) Install(c Config) error {
 		return err
 	}
 	path := m.UnitPath(c)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return fmt.Errorf("service: create LaunchAgents dir: %w", err)
 	}
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		return fmt.Errorf("service: write plist: %w", err)
 	}
 	domain := guiDomain()

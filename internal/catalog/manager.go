@@ -313,7 +313,7 @@ func (m *Manager) fetch(ctx context.Context) (Meta, error) {
 		SourceURL:  m.cfg.SourceURL,
 	}
 
-	if err := os.MkdirAll(m.cfg.CacheDir, 0o755); err != nil {
+	if err := os.MkdirAll(m.cfg.CacheDir, 0o750); err != nil {
 		return Meta{}, fmt.Errorf("create cache dir: %w", err)
 	}
 	if err := writeFileAtomic(m.catalogPath(), body, 0o644); err != nil {
@@ -358,15 +358,15 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) (err error) {
 		}
 	}()
 	if _, err = tmp.Write(data); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err = tmp.Chmod(perm); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err = tmp.Sync(); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err = tmp.Close(); err != nil {

@@ -63,7 +63,7 @@ func Materialize(baseDir string) (string, error) {
 		return dir, nil
 	}
 
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return "", fmt.Errorf("create builtin catalog dir: %w", err)
 	}
 	names, err := fs.Glob(catalogsFS, "catalogs/*.json")
@@ -77,14 +77,14 @@ func Materialize(baseDir string) (string, error) {
 		}
 		dst := filepath.Join(dir, filepath.Base(n))
 		tmp := dst + ".tmp"
-		if err := os.WriteFile(tmp, b, 0o644); err != nil {
+		if err := os.WriteFile(tmp, b, 0o600); err != nil {
 			return "", fmt.Errorf("write builtin catalog %s: %w", n, err)
 		}
 		if err := os.Rename(tmp, dst); err != nil {
 			return "", fmt.Errorf("finalize builtin catalog %s: %w", n, err)
 		}
 	}
-	if err := os.WriteFile(marker, []byte(dig), 0o644); err != nil {
+	if err := os.WriteFile(marker, []byte(dig), 0o600); err != nil {
 		return "", fmt.Errorf("write builtin catalog marker: %w", err)
 	}
 	return dir, nil

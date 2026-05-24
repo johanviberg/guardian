@@ -1,0 +1,21 @@
+version: 2
+updates:
+  # Keep Go module dependencies patched.
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      go-dependencies:
+        patterns: ["*"]
+    # The vendored Bumblebee tree is managed via hack/sync-upstream.sh, not
+    # Dependabot — but it carries no module requirements of its own (zero-dep),
+    # so there is nothing here to ignore.
+
+  # Keep the (first-party) GitHub Actions pinned and patched.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

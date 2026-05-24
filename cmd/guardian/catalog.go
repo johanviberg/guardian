@@ -135,6 +135,8 @@ func newCatalogShowCmd() *cobra.Command {
 // false when no cached metadata exists.
 func readCatalogMeta(cfg *config.Config) (catalog.Meta, bool) {
 	path := filepath.Join(cfg.Catalog.CacheDir, "catalog.meta.json")
+	// #nosec G304 -- path is derived from the user's own configured catalog cache
+	// dir; reading the metadata sidecar for a read-only JSON decode is intended.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return catalog.Meta{}, false

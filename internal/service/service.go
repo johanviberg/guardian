@@ -103,6 +103,10 @@ type commandRunner func(name string, args ...string) ([]byte, error)
 // runCommand is the package-level exec seam. Production code runs the real
 // binary; tests overwrite this var to record invocations.
 var runCommand commandRunner = func(name string, args ...string) ([]byte, error) {
+	// #nosec G204 -- single exec seam for platform service managers; name is a
+	// fixed init/scheduler binary (launchctl, systemctl, crontab) selected by
+	// guardian per-GOOS, and args derive from the local user's own service
+	// config for their own machine, never from external/untrusted input.
 	return exec.Command(name, args...).CombinedOutput()
 }
 
