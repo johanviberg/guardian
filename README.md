@@ -140,30 +140,44 @@ guardian service install --cron
 
 A catalog is JSON with a string `schema_version` and an `entries` array; detection is
 exact `(ecosystem, name, version)` matching. guardian ships an embedded baseline catalog
-and can refresh from a configurable source. See
-[`docs/CATALOG_FORMAT.md`](docs/CATALOG_FORMAT.md).
+and can refresh from one or more configurable sources. Sources are merged by union — same
+advisory id across sources gets its versions unioned and its severity set to the highest.
+See [`docs/CATALOG_FORMAT.md`](docs/CATALOG_FORMAT.md).
 
-### Optional signature verification
+### Multi-source feeds
 
-guardian can verify fetched feeds against a trusted
-[minisign](https://jedisct1.github.io/minisign/) public key (verify-only; sign with the
-standard `minisign` CLI). A detached signature lives next to each file as a sibling
-`<file>.minisig`. Configure via `catalog.verify` (`off` default, `warn`, `require`) and
-`catalog.public_key` (a key file path or inline key); `require` also accepts the
-`GUARDIAN_CATALOG_VERIFY` / `GUARDIAN_CATALOG_PUBLIC_KEY` env vars. The default upstream
-feed is unsigned, so verification is `off` out of the box.
-
-Pointing at a self-signed feed:
+Combine the public upstream feed with a private signed feed in `guardian.yaml`:
 
 ```yaml
 catalog:
-  source_url: https://example.com/feeds/catalog.json
-  verify: require
-  public_key: /etc/guardian/feed.pub
+  sources:
+    - name: upstream
+      url: https://api.github.com/repos/perplexityai/bumblebee/contents/threat_intel?ref=main
+      verify: off                      # upstream is unsigned
+
+    - name: internal
+      url: https://feeds.internal.example.com/catalog.json
+      verify: require                  # must have a valid minisign signature
+      public_key: /etc/guardian/internal-feed.pub
 ```
 
-In `require` mode a missing or invalid signature aborts the update and caches nothing; in
-`warn` mode it logs a warning and proceeds. See
+Each source caches independently under `catalog.cache_dir/sources/<name>/`; the merged
+result is written to `catalog.cache_dir/catalog.json`. The embedded baseline is always
+merged in as an implicit, unsigned, infallible source (offline-first on fresh machines).
+
+The single-source shorthand (`source_url`, `verify`, `public_key` at the top level of
+`catalog:`) still works when `sources` is absent.
+
+### Optional signature verification
+
+guardian verifies fetched feeds against a trusted
+[minisign](https://jedisct1.github.io/minisign/) public key (verify-only; sign with the
+standard `minisign` CLI). A detached signature lives next to each file as a sibling
+`<file>.minisig`. Configure `verify` per-source (`off` default, `warn`, `require`).
+
+In `require` mode a missing or invalid signature **aborts the update and caches nothing**;
+in `warn` mode it logs a warning and proceeds. The default upstream feed is unsigned, so
+`off` is the default. See
 [`docs/CATALOG_FORMAT.md`](docs/CATALOG_FORMAT.md#signature-verification-optional) for
 signing steps.
 

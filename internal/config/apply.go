@@ -27,11 +27,22 @@ type fileConfig struct {
 }
 
 type fileCatalog struct {
-	SourceURL    *string `yaml:"source_url"`
-	FreshnessTTL *string `yaml:"freshness_ttl"` // parsed as Go duration string
-	CacheDir     *string `yaml:"cache_dir"`
-	Verify       *string `yaml:"verify"`
-	PublicKey    *string `yaml:"public_key"`
+	SourceURL    *string         `yaml:"source_url"`
+	FreshnessTTL *string         `yaml:"freshness_ttl"` // parsed as Go duration string
+	CacheDir     *string         `yaml:"cache_dir"`
+	Verify       *string         `yaml:"verify"`
+	PublicKey    *string         `yaml:"public_key"`
+	Sources      []fileCatSource `yaml:"sources"`
+}
+
+// fileCatSource maps one element of catalog.sources in the YAML file.
+// All fields are value types (not pointers) because yaml.v3 populates list
+// elements directly; absent string fields simply stay as "".
+type fileCatSource struct {
+	Name      string `yaml:"name"`
+	URL       string `yaml:"url"`
+	Verify    string `yaml:"verify"`
+	PublicKey string `yaml:"public_key"`
 }
 
 type fileNotify struct {
@@ -94,6 +105,17 @@ func applyYAML(cfg *Config, data []byte) error {
 		}
 		if c.PublicKey != nil {
 			cfg.Catalog.PublicKey = *c.PublicKey
+		}
+		if c.Sources != nil {
+			cfg.Catalog.Sources = make([]CatalogSource, len(c.Sources))
+			for i, s := range c.Sources {
+				cfg.Catalog.Sources[i] = CatalogSource{
+					Name:      s.Name,
+					URL:       s.URL,
+					Verify:    s.Verify,
+					PublicKey: s.PublicKey,
+				}
+			}
 		}
 	}
 	if n := fc.Notify; n != nil {

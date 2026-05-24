@@ -12,7 +12,6 @@ import (
 
 	"github.com/johanviberg/guardian/internal/catalog"
 	"github.com/johanviberg/guardian/internal/catalog/builtin"
-	"github.com/johanviberg/guardian/internal/catalog/minisign"
 	"github.com/johanviberg/guardian/internal/config"
 	"github.com/johanviberg/guardian/internal/diff"
 	"github.com/johanviberg/guardian/internal/model"
@@ -64,55 +63,54 @@ func loadConfig(roots []string) (*config.Config, error) {
 	return cfg, nil
 }
 
-// newCatalogManager builds a catalog.Manager from config, honoring --no-fetch.
-// The embedded baseline catalogs are materialized to the cache dir and used as
-// the offline default, so a scan succeeds on a fresh machine with no network.
-func newCatalogManager(cfg *config.Config, noFetch bool, warn io.Writer) (*catalog.Manager, error) {
+// newFeedSet builds a catalog.FeedSet from config, honoring --no-fetch.
+// The embedded baseline catalogs are materialized to the cache dir and always
+// merged in as an implicit unsigned source, so a scan succeeds on a fresh
+// machine with no network.
+func newFeedSet(cfg *config.Config, noFetch bool, warn io.Writer) (*catalog.FeedSet, error) {
 	defaultDir, err := builtin.Materialize(cfg.Catalog.CacheDir)
 	if err != nil {
-		// Non-fatal: fall back to whatever the manager can fetch/cache.
+		// Non-fatal: skip the baseline if materialization fails.
 		defaultDir = ""
 	}
 
-	// Resolve the trusted minisign public key when verification is enabled.
-	var (
-		pubKey    minisign.PublicKey
-		pubKeySet bool
-	)
-	if cfg.Catalog.Verify != config.VerifyOff && cfg.Catalog.PublicKey != "" {
-		pubKey, pubKeySet, err = catalog.ResolvePublicKey(cfg.Catalog.PublicKey)
-		if err != nil {
-			return nil, fmt.Errorf("catalog public key: %w", err)
+	// Convert config-level sources (strings) to catalog.SourceSpecRaw so that
+	// FeedSetFromConfig can resolve each public key.
+	effSrcs := cfg.Catalog.EffectiveSources()
+	rawSpecs := make([]catalog.SourceSpecRaw, len(effSrcs))
+	for i, s := range effSrcs {
+		rawSpecs[i] = catalog.SourceSpecRaw{
+			Name:      s.Name,
+			URL:       s.URL,
+			Verify:    s.Verify,
+			PublicKey: s.PublicKey,
 		}
 	}
 
-	return catalog.NewManager(catalog.Config{
-		CacheDir:          cfg.Catalog.CacheDir,
-		SourceURL:         cfg.Catalog.SourceURL,
-		TTL:               cfg.Catalog.FreshnessTTL,
-		NoFetch:           noFetch,
-		DefaultCatalogDir: defaultDir,
-		HTTPClient:        &http.Client{Timeout: 30 * time.Second},
-		Verify:            cfg.Catalog.Verify,
-		PublicKey:         pubKey,
-		PublicKeySet:      pubKeySet,
-		WarnWriter:        warn,
-	})
+	return catalog.FeedSetFromConfig(
+		cfg.Catalog.CacheDir,
+		rawSpecs,
+		defaultDir,
+		cfg.Catalog.FreshnessTTL,
+		noFetch,
+		&http.Client{Timeout: 30 * time.Second},
+		warn,
+	)
 }
 
 // ensureCatalog resolves the catalog path + version for a scan. When the caller
 // supplied an explicit --catalog path, that path is used verbatim with no fetch.
-// Otherwise the Manager ensures a cached copy; a stale/offline-but-usable
+// Otherwise the FeedSet ensures a merged cached copy; a stale/offline-but-usable
 // catalog is tolerated (stale=true) and only a total absence is fatal.
 func ensureCatalog(ctx context.Context, cfg *config.Config, override string, noFetch bool, warn io.Writer) (path, version string, stale bool, err error) {
 	if override != "" {
 		return override, "(override)", false, nil
 	}
-	mgr, err := newCatalogManager(cfg, noFetch, warn)
+	fs, err := newFeedSet(cfg, noFetch, warn)
 	if err != nil {
 		return "", "", false, err
 	}
-	path, version, err = mgr.Ensure(ctx)
+	path, version, err = fs.Ensure(ctx)
 	if err != nil {
 		if errors.Is(err, catalog.ErrStale) {
 			fmt.Fprintf(warn, "guardian: warning: %v\n", err)

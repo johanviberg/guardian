@@ -54,22 +54,72 @@ const (
 	VerifyRequire = "require"
 )
 
+// CatalogSource is a single self-contained catalog feed. When multiple sources
+// are configured, their entries are merged by union with conflict resolution
+// (union versions, highest severity).
+type CatalogSource struct {
+	// Name is a human-readable stable identifier for this source. If empty,
+	// EffectiveSources assigns "source-N".
+	Name string `json:"name" yaml:"name"`
+	// URL is the HTTPS URL to fetch from. Same semantics as CatalogConfig.SourceURL.
+	URL string `json:"url" yaml:"url"`
+	// Verify selects minisign verification for this source: "off", "warn", "require".
+	// Defaults to "off" when empty.
+	Verify string `json:"verify" yaml:"verify"`
+	// PublicKey is the trusted minisign public key for this source (path or inline).
+	// Required when Verify == "require".
+	PublicKey string `json:"public_key" yaml:"public_key"`
+}
+
 // CatalogConfig configures exposure-catalog fetching and caching.
 type CatalogConfig struct {
+	// SourceURL / Verify / PublicKey are the BACK-COMPAT single-source shorthand.
+	// They are used when Sources is empty (EffectiveSources synthesises one source
+	// from them). When Sources is non-empty these fields are ignored for fetch
+	// purposes but SourceURL still feeds Validate's URL check.
 	SourceURL    string        `json:"source_url" yaml:"source_url"`
 	FreshnessTTL time.Duration `json:"freshness_ttl" yaml:"freshness_ttl"`
 	CacheDir     string        `json:"cache_dir" yaml:"cache_dir"`
 
-	// Verify selects minisign signature verification of fetched catalog files:
-	// "off" (default), "warn", or "require". See the Verify* constants.
+	// Verify selects minisign signature verification for the back-compat single
+	// source: "off" (default), "warn", or "require".
 	Verify string `json:"verify" yaml:"verify"`
 
-	// PublicKey is the trusted minisign public key used when Verify != "off".
-	// It accepts either a path to a minisign public-key file OR an inline key
-	// (the base64 key line, optionally with its `untrusted comment:` line). The
-	// catalog manager detects which by trying to parse it as a key first, then
-	// falling back to treating it as a file path.
+	// PublicKey is the trusted minisign public key for the back-compat single
+	// source (path to a .pub file OR inline key text).
 	PublicKey string `json:"public_key" yaml:"public_key"`
+
+	// Sources is the multi-source list. When non-empty it takes precedence over
+	// SourceURL/Verify/PublicKey for fetch purposes (back-compat shorthand becomes
+	// a no-op). Multi-source is configured via YAML only; there are no per-source
+	// env vars.
+	Sources []CatalogSource `json:"sources" yaml:"sources"`
+}
+
+// EffectiveSources returns the list of sources to fetch. If Sources is non-empty
+// it is returned (with empty Verify defaulted to "off" and unnamed entries named
+// "source-N"). Otherwise a single source is synthesised from the back-compat
+// SourceURL/Verify/PublicKey fields with name "default".
+func (cc CatalogConfig) EffectiveSources() []CatalogSource {
+	if len(cc.Sources) > 0 {
+		out := make([]CatalogSource, len(cc.Sources))
+		for i, s := range cc.Sources {
+			out[i] = s
+			if out[i].Name == "" {
+				out[i].Name = fmt.Sprintf("source-%d", i+1)
+			}
+			if out[i].Verify == "" {
+				out[i].Verify = VerifyOff
+			}
+		}
+		return out
+	}
+	return []CatalogSource{{
+		Name:      "default",
+		URL:       cc.SourceURL,
+		Verify:    cc.Verify,
+		PublicKey: cc.PublicKey,
+	}}
 }
 
 // QuietHours is an inclusive local-time window during which notifications are
@@ -220,6 +270,30 @@ func (c *Config) Validate() error {
 	if c.Catalog.Verify == VerifyRequire && c.Catalog.PublicKey == "" {
 		return fmt.Errorf("config: catalog.verify is %q but catalog.public_key is not set", VerifyRequire)
 	}
+	// Validate each explicitly configured source.
+	for i, src := range c.Catalog.Sources {
+		name := src.Name
+		if name == "" {
+			name = fmt.Sprintf("source-%d", i+1)
+		}
+		if src.URL == "" {
+			return fmt.Errorf("config: catalog.sources[%s]: url must not be empty", name)
+		}
+		if !strings.HasPrefix(src.URL, "http://") && !strings.HasPrefix(src.URL, "https://") {
+			return fmt.Errorf("config: catalog.sources[%s]: url must be http(s), got %q", name, src.URL)
+		}
+		verify := src.Verify
+		if verify == "" {
+			verify = VerifyOff
+		}
+		if !validVerifyMode(verify) {
+			return fmt.Errorf("config: catalog.sources[%s]: verify %q must be one of %q, %q, %q",
+				name, verify, VerifyOff, VerifyWarn, VerifyRequire)
+		}
+		if verify == VerifyRequire && src.PublicKey == "" {
+			return fmt.Errorf("config: catalog.sources[%s]: verify is %q but public_key is not set", name, VerifyRequire)
+		}
+	}
 	if c.Retention.ComponentDays < 0 {
 		return fmt.Errorf("config: retention.component_days must not be negative, got %d", c.Retention.ComponentDays)
 	}
@@ -352,11 +426,20 @@ func (c *Config) Effective() string {
 	}
 
 	w("catalog:\n")
-	w("  source_url:    %s\n", c.Catalog.SourceURL)
 	w("  freshness_ttl: %s\n", c.Catalog.FreshnessTTL)
 	w("  cache_dir:     %s\n", c.Catalog.CacheDir)
-	w("  verify:        %s\n", c.Catalog.Verify)
-	w("  public_key:    %s\n", redact(c.Catalog.PublicKey))
+	srcs := c.Catalog.EffectiveSources()
+	if len(c.Catalog.Sources) == 0 {
+		// Back-compat single-source shorthand.
+		w("  source_url:    %s\n", c.Catalog.SourceURL)
+		w("  verify:        %s\n", c.Catalog.Verify)
+		w("  public_key:    %s\n", redact(c.Catalog.PublicKey))
+	} else {
+		w("  sources (%d):\n", len(srcs))
+		for _, s := range srcs {
+			w("    [%s] url=%s verify=%s public_key=%s\n", s.Name, s.URL, s.Verify, redact(s.PublicKey))
+		}
+	}
 
 	w("notify:\n")
 	w("  channels:      %s\n", strings.Join(c.Notify.Channels, ", "))

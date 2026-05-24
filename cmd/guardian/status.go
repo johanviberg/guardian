@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/johanviberg/guardian/internal/catalog"
 	"github.com/johanviberg/guardian/internal/config"
 	"github.com/johanviberg/guardian/internal/report"
 )
@@ -73,12 +74,8 @@ func newStatusCmd() *cobra.Command {
 
 // catalogFreshness reports the cached catalog version, fetch time, and staleness
 // without any network access. A missing catalog reports version "" and stale.
-func catalogFreshness(ctx context.Context, cfg *config.Config) (version string, fetchedAt time.Time, stale bool) {
-	mgr, err := newCatalogManager(cfg, true, os.Stderr)
-	if err != nil {
-		return "", time.Time{}, true
-	}
-	v, fa, st, err := mgr.Freshness(ctx)
+func catalogFreshness(_ context.Context, cfg *config.Config) (version string, fetchedAt time.Time, stale bool) {
+	v, fa, st, err := catalog.FeedSetFreshness(cfg.Catalog.CacheDir, cfg.Catalog.FreshnessTTL)
 	if err != nil {
 		return "", time.Time{}, true
 	}

@@ -101,6 +101,124 @@ func TestCatalogVerifyYAML(t *testing.T) {
 	}
 }
 
+func TestEffectiveSources_BackCompat(t *testing.T) {
+	isolateEnv(t)
+	cfg := Defaults()
+	// No Sources set: EffectiveSources returns one "default" source from SourceURL.
+	srcs := cfg.Catalog.EffectiveSources()
+	if len(srcs) != 1 {
+		t.Fatalf("want 1 source, got %d", len(srcs))
+	}
+	if srcs[0].Name != "default" {
+		t.Fatalf("name = %q, want default", srcs[0].Name)
+	}
+	if srcs[0].URL != cfg.Catalog.SourceURL {
+		t.Fatalf("url = %q", srcs[0].URL)
+	}
+	if srcs[0].Verify != VerifyOff {
+		t.Fatalf("verify = %q", srcs[0].Verify)
+	}
+}
+
+func TestEffectiveSources_MultiSource(t *testing.T) {
+	isolateEnv(t)
+	cfg := Defaults()
+	cfg.Catalog.Sources = []CatalogSource{
+		{Name: "a", URL: "https://a.example.com/cat.json", Verify: VerifyOff},
+		{Name: "b", URL: "https://b.example.com/listing", Verify: VerifyWarn, PublicKey: "/k.pub"},
+		{URL: "https://c.example.com/cat.json"}, // unnamed — gets "source-3"
+	}
+	srcs := cfg.Catalog.EffectiveSources()
+	if len(srcs) != 3 {
+		t.Fatalf("want 3 sources, got %d", len(srcs))
+	}
+	if srcs[0].Name != "a" || srcs[1].Name != "b" {
+		t.Fatalf("names = [%q %q]", srcs[0].Name, srcs[1].Name)
+	}
+	if srcs[2].Name != "source-3" {
+		t.Fatalf("unnamed source name = %q, want source-3", srcs[2].Name)
+	}
+	// Empty verify defaults to off.
+	if srcs[2].Verify != VerifyOff {
+		t.Fatalf("unnamed source verify = %q, want off", srcs[2].Verify)
+	}
+}
+
+func TestValidate_MultiSource(t *testing.T) {
+	isolateEnv(t)
+	base := Defaults()
+
+	// Missing url rejected.
+	c := *base
+	c.Catalog.Sources = []CatalogSource{{Name: "x", Verify: VerifyOff}}
+	if err := c.Validate(); err == nil {
+		t.Fatal("want error for missing source url")
+	}
+
+	// Bad verify mode rejected.
+	c = *base
+	c.Catalog.Sources = []CatalogSource{{Name: "x", URL: "https://x.example.com/c.json", Verify: "bad"}}
+	if err := c.Validate(); err == nil {
+		t.Fatal("want error for bad source verify mode")
+	}
+
+	// require without key rejected.
+	c = *base
+	c.Catalog.Sources = []CatalogSource{{Name: "x", URL: "https://x.example.com/c.json", Verify: VerifyRequire}}
+	if err := c.Validate(); err == nil {
+		t.Fatal("want error for require without public_key")
+	}
+
+	// require with key accepted.
+	c = *base
+	c.Catalog.Sources = []CatalogSource{{Name: "x", URL: "https://x.example.com/c.json", Verify: VerifyRequire, PublicKey: "/k.pub"}}
+	if err := c.Validate(); err != nil {
+		t.Fatalf("require + key: %v", err)
+	}
+
+	// warn without key accepted.
+	c = *base
+	c.Catalog.Sources = []CatalogSource{{Name: "x", URL: "https://x.example.com/c.json", Verify: VerifyWarn}}
+	if err := c.Validate(); err != nil {
+		t.Fatalf("warn without key: %v", err)
+	}
+}
+
+func TestMultiSourceYAML(t *testing.T) {
+	isolateEnv(t)
+	writeConfig(t, `catalog:
+  sources:
+    - name: upstream
+      url: https://api.github.com/repos/perplexityai/bumblebee/contents/threat_intel?ref=main
+      verify: off
+    - name: internal
+      url: https://internal.example.com/catalog.json
+      verify: require
+      public_key: /etc/guardian/internal.pub
+`)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.Catalog.Sources) != 2 {
+		t.Fatalf("sources len = %d, want 2", len(cfg.Catalog.Sources))
+	}
+	if cfg.Catalog.Sources[0].Name != "upstream" {
+		t.Fatalf("sources[0].name = %q", cfg.Catalog.Sources[0].Name)
+	}
+	if cfg.Catalog.Sources[1].Verify != VerifyRequire {
+		t.Fatalf("sources[1].verify = %q", cfg.Catalog.Sources[1].Verify)
+	}
+	if cfg.Catalog.Sources[1].PublicKey != "/etc/guardian/internal.pub" {
+		t.Fatalf("sources[1].public_key = %q", cfg.Catalog.Sources[1].PublicKey)
+	}
+	// EffectiveSources uses Sources since non-empty.
+	srcs := cfg.Catalog.EffectiveSources()
+	if len(srcs) != 2 || srcs[0].Name != "upstream" {
+		t.Fatalf("EffectiveSources: %v", srcs)
+	}
+}
+
 func TestDefaults(t *testing.T) {
 	isolateEnv(t)
 	cfg := Defaults()

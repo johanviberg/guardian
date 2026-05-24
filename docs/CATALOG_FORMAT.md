@@ -55,15 +55,61 @@ consistent `schema_version` across files).
 ## How guardian sources catalogs
 
 - **Embedded baseline:** a snapshot of the upstream catalogs ships inside the binary, so a
-  scan works offline on first run with no configuration.
-- **Cached/fetched:** `guardian catalog update` fetches a fresher catalog from the
-  configured source (default: the upstream `threat_intel/` directory via the GitHub
-  Contents API) into the local cache, validates it, and records a sha256.
+  scan works offline on first run with no configuration. It is always merged in as an
+  implicit, unsigned, infallible source.
+- **Cached/fetched:** `guardian catalog update` fetches fresher catalogs from all configured
+  sources into per-source local caches, validates them, and merges them into a single
+  `catalog.json` the engine consumes. Provenance is recorded in `feed.meta.json`.
 - **Override:** `guardian scan --catalog <path>` uses a specific file or directory
-  verbatim, with no fetch.
+  verbatim, with no fetch and no multi-source merge.
 
 Freshness is governed by a TTL (config `catalog.freshness_ttl`); `guardian status` and
-`guardian doctor` report whether the active catalog is fresh or stale.
+`guardian doctor` report the merged version and whether any source is stale.
+
+## Multi-source catalog feeds
+
+guardian can merge catalogs from multiple independent sources. Configure via
+`catalog.sources`; the back-compat `source_url`/`verify`/`public_key` shorthand still
+works when `sources` is absent (synthesised as a single `{name: "default"}` source).
+
+```yaml
+catalog:
+  freshness_ttl: 24h
+  sources:
+    - name: upstream            # human-readable name (used for cache isolation)
+      url: https://api.github.com/repos/perplexityai/bumblebee/contents/threat_intel?ref=main
+      verify: off               # default upstream is unsigned
+
+    - name: internal            # a self-signed private feed
+      url: https://feeds.internal.example.com/catalog.json
+      verify: require           # require a valid minisign signature
+      public_key: /etc/guardian/internal-feed.pub
+```
+
+Per-source caches land under `catalog.cache_dir/sources/<name>/`; the merged output at
+`catalog.cache_dir/catalog.json`. Multi-source config is **YAML-only**.
+
+### Conflict resolution (union merge)
+
+When two sources list the same advisory `id`, guardian merges them by union:
+
+| Field | Rule |
+|-------|------|
+| `versions` | **Union** — all versions, deduplicated, stable order (first-seen source first). |
+| `severity` | **Highest** — `critical > high > medium > low > info`; unknown/free-form below `info`; ties → first source wins. |
+| `name`, `ecosystem`, `package` | First source's values kept; ecosystem/package mismatch emits a warning. |
+| `schema_version` | First non-empty seen; disagreement emits a warning and the merge proceeds. |
+
+Merge warnings appear in `feed.meta.json` and `guardian catalog show`.
+
+### Per-source failure handling
+
+| Failure | Behavior |
+|---------|---------|
+| Fetch error, cached copy exists | Use stale cache + warn, merge proceeds. |
+| Fetch error, no cache | Skip source, warn, merge remaining. |
+| `verify: require` + invalid/missing sig | **Abort** (`ErrSignature`); nothing written to cache. |
+| `verify: warn` + invalid/missing sig | Warn, proceed (entries included). |
 
 ## Signature verification (optional)
 
