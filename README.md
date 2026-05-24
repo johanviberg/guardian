@@ -40,7 +40,7 @@ go install github.com/rmxventures/guardian/cmd/guardian@latest
 Or build from source:
 
 ```sh
-git clone https://github.com/rmxventures/guardian
+git clone https://github.com/johanviberg/guardian
 cd guardian
 go build -o guardian ./cmd/guardian
 ```
