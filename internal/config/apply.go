@@ -117,12 +117,9 @@ func applyYAML(cfg *Config, data []byte) error {
 		if c.Sources != nil {
 			cfg.Catalog.Sources = make([]CatalogSource, len(c.Sources))
 			for i, s := range c.Sources {
-				cfg.Catalog.Sources[i] = CatalogSource{
-					Name:      s.Name,
-					URL:       s.URL,
-					Verify:    s.Verify,
-					PublicKey: s.PublicKey,
-				}
+				// fileCatSource and CatalogSource have identical fields; a
+				// direct conversion is clearer than a field-by-field literal.
+				cfg.Catalog.Sources[i] = CatalogSource(s)
 			}
 		}
 	}

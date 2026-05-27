@@ -1,5 +1,7 @@
 /guardian
 /dist/
 *.db
+# Ignore stray NDJSON (e.g. scanner output dumps) but keep committed test fixtures.
 *.ndjson
+!**/testdata/*.ndjson
 .DS_Store
