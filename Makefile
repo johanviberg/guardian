@@ -27,8 +27,8 @@ run: build ## Dogfood: scan this repo with the embedded catalog, offline
 scan-self: ## Dogfood in an isolated HOME (no writes to your real state); args pass through
 	./hack/scan-self.sh
 
-test: ## Run all tests with the race detector
-	go test -race ./...
+test: ## Run all tests with the race detector (our packages; excludes vendored tree)
+	go test -race $(OWN_PKGS)
 
 vet: ## go vet
 	go vet ./...

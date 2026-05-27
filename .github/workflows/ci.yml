@@ -49,7 +49,12 @@ jobs:
       - name: Build
         run: go build ./...
       - name: Test (race detector)
-        run: go test -race ./...
+        # Test our own packages only; the vendored Bumblebee tree is upstream
+        # code (and its tests assume Unix paths, so they fail on Windows). This
+        # mirrors the exclusion already used by the lint and security jobs.
+        # shell: bash so the $(...) | grep pipeline also works on the Windows runner.
+        shell: bash
+        run: go test -race $(go list ./... | grep -v '/internal/bumblebee/')
 
   # ---------------------------------------------------------------------------
   # Formatting, vet, and static analysis.
