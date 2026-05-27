@@ -1,6 +1,11 @@
 BINARY    := guardian
 PKG       := ./cmd/guardian
 GOBIN     := $(shell go env GOPATH)/bin
+# Pinned tool versions — keep in sync with .github/workflows/ci.yml so local
+# `make ci` and the CI gate run identical binaries.
+GOVULNCHECK_VERSION := v1.3.0
+GOSEC_VERSION       := v2.26.1
+STATICCHECK_VERSION := v0.7.0
 # Our own packages (everything except the vendored Bumblebee tree).
 OWN_PKGS  := $(shell go list ./... 2>/dev/null | grep -v '/internal/bumblebee/')
 OWN_DIRS   = $(shell go list -f '{{.Dir}}' $(OWN_PKGS))
@@ -51,9 +56,9 @@ sec: gosec vuln ## Security scanners (gosec + govulncheck)
 ci: lint sec test run ## Everything CI runs, locally
 
 tools: ## Install dev tools (govulncheck, gosec, staticcheck) if missing
-	@test -x $(GOBIN)/govulncheck || go install golang.org/x/vuln/cmd/govulncheck@latest
-	@test -x $(GOBIN)/gosec       || go install github.com/securego/gosec/v2/cmd/gosec@latest
-	@test -x $(GOBIN)/staticcheck || go install honnef.co/go/tools/cmd/staticcheck@latest
+	@test -x $(GOBIN)/govulncheck || go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
+	@test -x $(GOBIN)/gosec       || go install github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION)
+	@test -x $(GOBIN)/staticcheck || go install honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION)
 
 clean: ## Remove build artifacts
 	rm -f $(BINARY)

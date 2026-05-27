@@ -25,6 +25,17 @@ jobs:
       packages: read # pull any private modules/images if needed
       attestations: write # write the SLSA build-provenance attestation
     steps:
+      # EDR for the runner: monitors network egress, file integrity, and process
+      # activity. Audit mode logs without blocking, so it can't break a release;
+      # it would surface the secret-exfil-to-network behaviour seen in the
+      # tj-actions attack. Review the generated insights, then tighten to
+      # `egress-policy: block` with an allowed-endpoints list once a baseline is
+      # established (GitHub, proxy.golang.org/sum.golang.org, Fulcio, Rekor).
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
       # Full history is required so goreleaser can build the changelog and
       # resolve .CommitTimestamp for reproducible builds. persist-credentials
       # is off so the checkout token isn't left on disk for later steps.
@@ -39,6 +50,10 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           check-latest: true
+          # No build cache in the release pipeline: a cache poisoned by an
+          # earlier (e.g. PR) run must never be able to taint the signed
+          # artifacts produced here. The release builds from a clean module set.
+          cache: false
 
       # cosign: keyless blob signing of the checksums file.
       - name: Install cosign

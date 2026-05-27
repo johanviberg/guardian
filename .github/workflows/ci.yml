@@ -16,6 +16,14 @@ concurrency:
 
 env:
   GO_VERSION: "1.26.x"
+  # Security/lint tools are pinned to explicit versions (not @latest) so a CI
+  # run can't silently pull a newly-published — or compromised — release.
+  # Dependabot's gomod/actions updates don't cover `go install` targets, so bump
+  # these by hand and let the diff be reviewed like any other dependency change.
+  STATICCHECK_VERSION: "v0.7.0"
+  GOVULNCHECK_VERSION: "v1.3.0"
+  GOSEC_VERSION: "v2.26.1"
+  ZIZMOR_VERSION: "1.25.2"
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -71,7 +79,7 @@ jobs:
         run: go vet ./...
       - name: staticcheck
         run: |
-          go install honnef.co/go/tools/cmd/staticcheck@latest
+          go install "honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}"
           staticcheck ./cmd/... $(go list ./internal/... | grep -v '/internal/bumblebee/')
 
   # ---------------------------------------------------------------------------
@@ -92,14 +100,44 @@ jobs:
 
       - name: govulncheck (Go vulnerability database)
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
           govulncheck ./...
 
       - name: gosec (static security analysis)
         run: |
-          go install github.com/securego/gosec/v2/cmd/gosec@latest
+          go install "github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}"
           # Exclude the vendored upstream tree from our own SAST gate.
           gosec -exclude-dir=internal/bumblebee ./...
+
+  # ---------------------------------------------------------------------------
+  # Static analysis of our own GitHub Actions workflows. zizmor catches the
+  # misconfigurations behind the 2025-2026 Actions supply-chain attacks
+  # (unpinned actions, template injection, dangerous triggers, over-broad
+  # tokens) before they ship, and keeps that posture from regressing as
+  # Dependabot rewrites action SHAs over time. Installed via pipx at a pinned
+  # version; results land in the code-scanning tab as SARIF.
+  # ---------------------------------------------------------------------------
+  workflow-audit:
+    name: workflow audit (zizmor)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write # upload SARIF to code scanning
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Run zizmor
+        run: pipx run "zizmor==${ZIZMOR_VERSION}" --format=sarif . > zizmor.sarif
+        env:
+          # Lets zizmor run its online audits (e.g. resolving action refs).
+          GH_TOKEN: ${{ github.token }}
+      - name: Upload SARIF
+        if: always() # publish findings even when zizmor exits non-zero
+        uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
+        with:
+          sarif_file: zizmor.sarif
+          category: zizmor
 
   # ---------------------------------------------------------------------------
   # Dogfooding: run guardian against its own source tree. Fails the build only

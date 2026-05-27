@@ -1,0 +1,16 @@
+# Code owners for guardian.
+# Used by the protect-main ruleset's code-owner-review requirement and shown as
+# the default reviewer on every PR. See docs/go-live-github-settings.md.
+
+# Everything, unless overridden below.
+*                       @johanviberg
+
+# Security-, supply-chain-, and release-critical paths. Called out explicitly so
+# changes here always route to the maintainer even if ownership is delegated
+# more broadly above in the future.
+/.github/                @johanviberg
+/.goreleaser.yaml        @johanviberg
+/SECURITY.md             @johanviberg
+/internal/bumblebee/     @johanviberg
+/internal/catalog/       @johanviberg
+/hack/                   @johanviberg

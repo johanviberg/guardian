@@ -1,0 +1,22 @@
+# Lefthook git hooks for guardian.
+# Install after cloning:  lefthook install
+# Docs: https://lefthook.dev
+pre-commit:
+  parallel: true
+  commands:
+    # Block secrets from ever entering history. Scans only what's staged.
+    gitleaks:
+      run: gitleaks git --pre-commit --staged --redact --no-banner
+      # Don't silently pass if gitleaks isn't installed.
+      fail_text: "gitleaks is required. Install it: https://github.com/gitleaks/gitleaks#installing"
+
+    # Keep gofmt clean (mirrors the CI gofmt gate). Only checks staged Go files.
+    gofmt:
+      glob: "*.go"
+      # Skip vendored upstream; it's synced verbatim via hack/sync-upstream.sh.
+      exclude: '^internal/bumblebee/'
+      run: |
+        unformatted=$(gofmt -l {staged_files})
+        if [ -n "$unformatted" ]; then
+          echo "::gofmt needed on:"; echo "$unformatted"; exit 1
+        fi

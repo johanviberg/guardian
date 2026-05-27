@@ -1,0 +1,16 @@
+# Normalize line endings: Git stores LF, checks out native on Windows.
+* text=auto eol=lf
+
+# Binary / non-diffable assets.
+*.png   binary
+*.jpg   binary
+*.gif   binary
+*.ico   binary
+*.db    binary
+*.sig   binary
+*.pem   binary
+
+# Generated / vendored — collapse in PR diffs and exclude from language stats.
+go.sum                  linguist-generated=true
+internal/bumblebee/**   linguist-vendored=true
+internal/catalog/builtin/** linguist-generated=true
