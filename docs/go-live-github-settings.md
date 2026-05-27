@@ -103,11 +103,11 @@ gh api -X PUT "$R/actions/permissions/workflow" \
 Modern rulesets (not legacy branch protection). Requires PR review, blocks force-push and
 deletion, and gates on status checks.
 
-> **Status-check names:** the contexts below match the current job names in
-> `ci.yml`/`codeql.yml`. Confirm them against a real run before applying — list with:
-> `gh api "$R/commits/main/check-runs" --jq '.check_runs[].name'`
+> **Status-check names:** the contexts below are the real check-run names (verified
+> against a run). Note CodeQL reports as **`analyze (go)`**, not `CodeQL`. Re-confirm
+> if you rename jobs: `gh api "$R/commits/main/check-runs" --jq '.check_runs[].name'`
 > (expect `test (ubuntu-latest)`, `lint & vet`, `security scan`,
-> `workflow audit (zizmor)`, `guardian self-scan`, `CodeQL`).
+> `workflow audit (zizmor)`, `guardian self-scan`, `analyze (go)`).
 
 ```sh
 # Confirm existing rulesets
@@ -126,11 +126,11 @@ gh api -X POST "$R/rulesets" --input - <<'JSON'
     { "type": "required_linear_history" },
     { "type": "pull_request",
       "parameters": {
-        "required_approving_review_count": 1,
-        "dismiss_stale_reviews_on_push": true,
-        "require_code_owner_review": true,
-        "require_last_push_approval": true,
-        "required_review_thread_resolution": true
+        "required_approving_review_count": 0,
+        "dismiss_stale_reviews_on_push": false,
+        "require_code_owner_review": false,
+        "require_last_push_approval": false,
+        "required_review_thread_resolution": false
       }
     },
     { "type": "required_status_checks",
@@ -142,7 +142,7 @@ gh api -X POST "$R/rulesets" --input - <<'JSON'
           { "context": "security scan" },
           { "context": "workflow audit (zizmor)" },
           { "context": "guardian self-scan" },
-          { "context": "CodeQL" }
+          { "context": "analyze (go)" }
         ]
       }
     }
@@ -151,12 +151,11 @@ gh api -X POST "$R/rulesets" --input - <<'JSON'
 JSON
 ```
 
-> Solo maintainer note: `required_approving_review_count: 1` plus
-> `require_code_owner_review: true` (the code owner being you, per `.github/CODEOWNERS`)
-> means you can't merge your own PRs without a second account/reviewer. If that's too
-> strict for now, set the count to `0` and `require_code_owner_review` to `false` — you
-> still get the PR gate, status checks, and force-push/deletion protection. Re-tighten
-> both once a second maintainer exists.
+> Solo maintainer note: the values above use `required_approving_review_count: 0` and
+> `require_code_owner_review: false` so a lone maintainer can self-merge — you still get
+> the PR gate (no direct pushes to main), required status checks, and force-push/deletion
+> protection. When a second maintainer exists, raise the count to `1` and set
+> `require_code_owner_review: true` (`.github/CODEOWNERS` already lists the owner).
 
 ## 6. Tag protection for release tags
 

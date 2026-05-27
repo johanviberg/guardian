@@ -68,6 +68,13 @@ run api -X PUT "$R/actions/permissions/workflow" \
   -F can_approve_pull_request_reviews=false
 
 # 5. Branch protection ruleset for the default branch.
+# Solo-maintainer config: every change must go through a PR with green status
+# checks, and main can't be force-pushed or deleted — but a PR is self-mergeable
+# (review count 0, no code-owner gate) so a lone maintainer isn't locked out.
+# When a second maintainer exists, raise required_approving_review_count to 1 and
+# set require_code_owner_review to true (CODEOWNERS already lists the owner).
+# The status-check contexts are the real check-run names; `analyze (go)` is
+# CodeQL's per-language run (NOT "CodeQL"). Confirm against a run if you rename jobs.
 ensure_ruleset "protect-main" '{
   "name": "protect-main",
   "target": "branch",
@@ -79,11 +86,11 @@ ensure_ruleset "protect-main" '{
     { "type": "required_linear_history" },
     { "type": "pull_request",
       "parameters": {
-        "required_approving_review_count": 1,
-        "dismiss_stale_reviews_on_push": true,
-        "require_code_owner_review": true,
-        "require_last_push_approval": true,
-        "required_review_thread_resolution": true
+        "required_approving_review_count": 0,
+        "dismiss_stale_reviews_on_push": false,
+        "require_code_owner_review": false,
+        "require_last_push_approval": false,
+        "required_review_thread_resolution": false
       }
     },
     { "type": "required_status_checks",
@@ -95,7 +102,7 @@ ensure_ruleset "protect-main" '{
           { "context": "security scan" },
           { "context": "workflow audit (zizmor)" },
           { "context": "guardian self-scan" },
-          { "context": "CodeQL" }
+          { "context": "analyze (go)" }
         ]
       }
     }
