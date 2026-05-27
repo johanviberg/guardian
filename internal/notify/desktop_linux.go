@@ -8,7 +8,7 @@ import "os/exec"
 var runCmd = func(name string, args ...string) error {
 	// G204: callers pass a fixed tool name ("notify-send") resolved via
 	// lookPath; args are notification title/body, not shell-interpreted.
-	return exec.Command(name, args...).Run() //nosec G204 -- fixed binary, no shell
+	return exec.Command(name, args...).Run() // #nosec G204 -- fixed binary, no shell
 }
 
 // lookPath is the tool-discovery hook; overridable in tests.
